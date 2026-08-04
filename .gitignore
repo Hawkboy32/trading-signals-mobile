@@ -1,0 +1,20 @@
+# Python backend
+backend/.venv/
+__pycache__/
+*.pyc
+.env
+
+# Flutter (once flutter_app/ exists)
+flutter_app/.dart_tool/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/build/
+flutter_app/.pub-cache/
+flutter_app/.pub/
+flutter_app/android/.gradle/
+flutter_app/android/local.properties
+flutter_app/ios/Pods/
+
+# OS noise
+.DS_Store
+Thumbs.db
