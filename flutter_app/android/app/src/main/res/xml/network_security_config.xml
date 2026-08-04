@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This app only ever talks to a private backend over Tailscale (never the
+     public internet), which won't have a TLS cert - Android blocks plain
+     http:// by default since API 28, so cleartext needs an explicit opt-in.
+     Scoped to allow it everywhere rather than a specific hostname, since the
+     backend address is user-configured at runtime (a Tailscale IP/hostname
+     that varies per user), not knowable at build time. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
