@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder shown for the brief instant before Glance renders the real
+     content (SignalsWidget.kt) - a plain custom layout rather than relying
+     on an unverified library-provided resource name. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:text="Loading signals..."
+    android:padding="16dp" />

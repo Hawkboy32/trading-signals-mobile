@@ -75,6 +75,25 @@ around, worth knowing if the toolchain ever needs touching again:
 - Confirmed "Reachable" in the app's own connection test, then live signals loading on the real
   device — the full chain (Tailscale, backend, app) is proven working, not just theoretically set up.
 
+=== HOME-SCREEN WIDGET (added 2026-08-05) ===
+Added a native Android home-screen widget (Jetpack Glance) showing up to 4 combos (ticker +
+color-coded signal) at a glance, no need to open the app. Built via the `home_widget` +
+`workmanager` Flutter packages bridging to a Kotlin `GlanceAppWidget`
+(`android/app/src/main/kotlin/.../widget/SignalsWidget.kt` +
+`SignalsWidgetReceiver.kt`). Data flow: `lib/services/widget_service.dart`'s `refreshWidget()`
+calls the same `ApiClient.fetchSignals()` the in-app list already uses, saves a compact JSON
+string via `HomeWidget.saveWidgetData`, then `HomeWidget.updateWidget()`. Refreshed from two
+places — piggybacked on the app's own 60s in-app refresh whenever it's open, and a WorkManager
+periodic background task (~15 min floor, Android's real minimum for periodic background work)
+so it stays roughly current while the app is closed. Tapping the widget opens the app.
+Verified end to end on both the emulator and the real phone: widget renders live data matching
+the app exactly, tap-to-open confirmed on both.
+Real gotchas hit while building this (see git history / session transcript for full detail):
+Glance 1.1.1's `currentState()` lives under `androidx.glance`, not `androidx.glance.state`;
+`ColorProvider` always needs both day/night params in this version; `actionStartActivity` has no
+reified `<T>` overload, needs an explicit `Intent`. All confirmed against the actual installed
+AAR bytecode, not just docs, since docs/summaries proved stale on more than one of these.
+
 === KNOWN LIMITATIONS / NOT YET BUILT ===
 - Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo
   customization in the app itself, matches the "just mirror what the bot trades" v1 design.

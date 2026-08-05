@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis is Android's own widget-level auto-refresh - a
+     passive backstop only. The REAL refresh path is the app/WorkManager
+     explicitly calling HomeWidget.updateWidget() (see widget_service.dart)
+     whenever fresh data is actually fetched, so this is set generously
+     high rather than relied on for freshness. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/signals_widget_loading"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:updatePeriodMillis="1800000">
+</appwidget-provider>

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/signal.dart';
-import '../services/api_client.dart';
+import '../services/widget_service.dart';
 import 'settings_screen.dart';
 
 const _pollInterval = Duration(seconds: 60);
@@ -35,7 +35,10 @@ class _SignalListScreenState extends State<SignalListScreen> {
 
   Future<void> _refresh() async {
     try {
-      final data = await ApiClient.fetchSignals();
+      // refreshWidget() does the actual fetch AND pushes the same data to
+      // the home-screen widget - one network call serves both.
+      final data = await refreshWidget();
+      if (data == null) throw Exception('refresh failed');
       if (!mounted) return;
       setState(() {
         _data = data;
