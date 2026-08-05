@@ -1,0 +1,91 @@
+CLAUDE_NOTES.txt — Trading Signals Mobile App: reference for picking up a new session
+(Last updated: 2026-08-05. Update this file as the project evolves — don't let it go stale.)
+
+=== WHAT THIS IS ===
+An Android app (Flutter) that shows a live buy/sell/hold signal + confidence score per
+(ticker, strategy) combo — NOT a trading bot, purely informational, for the user to act on
+manually. Built as a companion to the backtester project (../backtester) — deliberately reuses
+that project's exact validated strategy code rather than reimplementing any logic in Dart, so
+the signals shown can never silently drift out of sync with what's actually been backtested/tuned.
+
+=== ARCHITECTURE ===
+- `backend/` — a small read-only FastAPI service (own isolated venv, `backtester` installed into
+  it as an editable dependency: `pip install -e ../../backtester`). `signal_service.py` mirrors
+  auto_trader.py's own signal-computation steps exactly (fetch recent bars -> build_strategy ->
+  on_bar -> conviction). `signal_api.py` runs a background refresh loop every 120s (matching the
+  live bot's own poll interval) and serves the latest cached result instantly via `GET /signals` —
+  never hits Polygon per mobile request. Combos shown are read live from the SAME sources the real
+  bot trades: `roster.load_roster()`'s active/paused entries + `control.json`'s `extra_targets` —
+  no separate watchlist to maintain; a roster re-evaluation or a new extra_targets config shows up
+  automatically. Runs via `uvicorn signal_api:app --host 0.0.0.0 --port 8600`.
+- `flutter_app/` — the Android app. Main screen: a card per combo (ticker, strategy, color-coded
+  BUY/SELL/HOLD badge, conviction as a % + progress bar), auto-polls `/signals` every 60s plus
+  pull-to-refresh. Settings screen: backend URL (always user-configured, never hardcoded — see
+  Tailscale note below) with a "Test connection" check against `/health`.
+- Reachability: the backend is reached over **Tailscale**, not the public internet — matches this
+  project's own established hosting philosophy (see backtester's CLAUDE_NOTES.txt Pi/hosting
+  notes). This PC's Tailscale IP is `[redacted-tailscale-ip]`; the phone ("[redacted-device-name]") is on the same
+  tailnet. Android blocks plain `http://` by default since API 28 — the app's
+  `android/app/src/main/res/xml/network_security_config.xml` explicitly allows cleartext traffic
+  everywhere (scoped this way because the backend address is only known at runtime, not build
+  time — deliberate, not an oversight, and safe specifically because it only ever talks to a
+  private Tailscale address, never the public internet).
+
+=== HOW TO RUN THE BACKEND ===
+- `cd Mobile_App/backend && .venv/Scripts/uvicorn signal_api:app --host 0.0.0.0 --port 8600`
+- Needs `backtester/.env` (same Polygon key the dashboard/bot use) — loaded automatically by
+  absolute path, cwd-independent.
+- **Must be running on this PC (and Tailscale connected) for the phone app to show live data** —
+  same operational dependency as the trading bot itself. If the PC sleeps/shuts down, the app will
+  show "Could not reach backend" until it's back up. No auto-start-on-login wired up for this yet
+  (the trading bot has one — see backtester's CLAUDE_NOTES.txt — this doesn't, deliberately not
+  built until it's clear this app gets regular use).
+
+=== TOOLCHAIN INSTALLED THIS SESSION (2026-08-04/05) ===
+Flutter SDK, Android Studio, Android SDK (cmdline-tools, platform-tools, build-tools, an emulator
+named "medium_phone") all freshly installed and verified via `flutter doctor`. Flutter lives at
+`C:\src\flutter` (added to User PATH); Android SDK at the default
+`%LOCALAPPDATA%\Android\Sdk` (`ANDROID_HOME`/`ANDROID_SDK_ROOT` set). Real gotchas hit and worked
+around, worth knowing if the toolchain ever needs touching again:
+- Google's own direct SDK-tools download URLs are NOT stable/predictable enough to hardcode — one
+  scraped from their own docs page 404'd. Use `winget` where possible (worked cleanly for Android
+  Studio itself), or let Android Studio's own first-run wizard / SDK Manager UI fetch things (its
+  internal updater uses the real current URLs).
+- The deprecated `sdkmanager`/`avdmanager` CLI (bundled under `cmdline-tools/latest/bin/`) hit a
+  real bug creating an AVD against a very new platform version (`android-37.0`) —
+  "Could not load devices from ...\devices.xml" — reproducible, not a fluke. The newer `android`
+  CLI (same `cmdline-tools/latest/bin/android.exe`, replaces the deprecated tools) worked cleanly:
+  `android emulator create medium_phone` (uses simple generic profile names like `medium_phone`,
+  not the old `avdmanager`'s device-ID list) — it even fetched its own system image automatically.
+- `JAVA_HOME` needs to point at Android Studio's bundled JBR
+  (`C:\Program Files\Android\Android Studio\jbr`) for the cmdline-tools to work standalone.
+
+=== VERIFIED END TO END (2026-08-04/05) ===
+- Emulator: built, installed, launched, connected to the locally-running backend (via `10.0.2.2`,
+  the emulator's alias for the host), displayed live signals matching the backend's own output
+  exactly (SWK SELL @ 98.1348, cross-checked against the real trading bot's own last-recorded
+  signal — not an approximation).
+- Real phone: release APK (`flutter build apk --release`) installed on the user's actual Android
+  phone over Tailscale. In-chat file delivery didn't trigger Android's installer reliably (tapped,
+  nothing happened) — worked around by serving the APK over a one-off `python -m http.server` on
+  this PC and having the phone's browser download it directly (browser-triggered APK downloads
+  reliably hand off to the installer; in-chat attachment handling apparently doesn't always).
+  That temporary download server was stopped once the install completed — only the real backend
+  (port 8600) stays running.
+- Confirmed "Reachable" in the app's own connection test, then live signals loading on the real
+  device — the full chain (Tailscale, backend, app) is proven working, not just theoretically set up.
+
+=== KNOWN LIMITATIONS / NOT YET BUILT ===
+- Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo
+  customization in the app itself, matches the "just mirror what the bot trades" v1 design.
+- No auto-start-on-login for the backend process (see above) — needs a manual restart after this
+  PC reboots, unlike the trading bot which already has this solved.
+- Not signed with a real release keystore (uses Flutter's default debug-signing fallback) — fine
+  for personal sideloading, would need a proper keystore before any wider distribution (not a
+  goal here).
+- iOS: architecturally free (Flutter), but nothing iOS-specific has been touched/tested.
+
+=== WHERE TO LOOK FOR MORE DETAIL ===
+Claude's own auto-memory system (separate from this file) has the fuller session-by-session
+history of how this got built. This .txt is the lightweight, quick-orientation summary — see
+../backtester/CLAUDE_NOTES.txt for the trading bot itself, which this app depends on.
