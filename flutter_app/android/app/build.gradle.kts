@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose") // needed for the Glance home-screen widget
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -12,6 +13,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        compose = true
     }
 
     defaultConfig {
@@ -38,6 +43,13 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    // Same version the home_widget plugin itself already depends on
+    // internally (confirmed in its own build.gradle) - kept in sync so
+    // there's only one glance-appwidget version resolved in the build.
+    implementation("androidx.glance:glance-appwidget:1.1.1")
 }
 
 flutter {
