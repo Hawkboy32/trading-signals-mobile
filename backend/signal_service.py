@@ -10,8 +10,9 @@ Read-only: never touches roster.json/control.json, never places an order.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
+from backtester import current_signals
 from backtester.conviction import compute_conviction
 from backtester.data import PolygonClient
 from backtester.strategies import build_strategy
@@ -21,6 +22,11 @@ from backtester.strategy import Bar, Signal
 # any strategy's default window, even on daily bars. Not required_lookback()
 # -driven, matching the live bot exactly (see auto_trader.py).
 LOOKBACK_DAYS = 90
+
+# 3x the shared 120s poll interval - same staleness margin auto_trader.py's
+# own singleton guard uses for its heartbeat. Beyond this, auto_trader.py is
+# either not running or stuck, and a direct fetch is the honest fallback.
+SNAPSHOT_STALE_SECONDS = 360
 
 
 @dataclass
@@ -34,6 +40,36 @@ class SignalResult:
     error: str | None = None
 
 
+def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | None:
+    """Reuse auto_trader.py's already-computed signal for this ticker this
+    cycle instead of hitting Polygon a second time for identical data - see
+    backtester.current_signals. Both this backend and auto_trader.py share
+    one Polygon account and its real ~5 req/min free-tier ceiling; each
+    self-throttling independently doesn't stop their combined, uncoordinated
+    calls from tripping a real 429 when their cycles land close together.
+
+    Returns None (falls back to a direct fetch below) if auto_trader.py
+    isn't running, hasn't evaluated this ticker yet, is currently trading a
+    different strategy for it (e.g. mid roster change), or the entry has
+    gone stale.
+    """
+    entry = current_signals.load_signals().get(ticker)
+    if entry is None or entry.get("strategy_name") != strategy_name:
+        return None
+    try:
+        written_at = datetime.fromisoformat(entry["written_at"])
+    except (KeyError, ValueError):
+        return None
+    age = (datetime.now(timezone.utc) - written_at).total_seconds()
+    if age > SNAPSHOT_STALE_SECONDS:
+        return None
+    return SignalResult(
+        ticker=ticker, strategy_name=strategy_name, signal=entry["signal"],
+        conviction=entry.get("conviction"), price=entry.get("price", 0.0),
+        computed_at=entry.get("bar_timestamp", ""),
+    )
+
+
 def compute_current_signal(
     ticker: str, strategy_name: str, params: dict, client: PolygonClient
 ) -> SignalResult:
@@ -42,7 +78,14 @@ def compute_current_signal(
     the live bot, which only scores conviction on a BUY for sizing purposes)
     compute conviction whenever the signal isn't HOLD - this app is purely
     informational, so a SELL's conviction is just as useful to show.
+
+    Tries the shared snapshot first (see _signal_from_snapshot) - a direct
+    Polygon fetch only happens when there's no fresh snapshot to reuse.
     """
+    snapshot = _signal_from_snapshot(ticker, strategy_name)
+    if snapshot is not None:
+        return snapshot
+
     try:
         to_date = date.today()
         from_date = to_date - timedelta(days=LOOKBACK_DAYS)
