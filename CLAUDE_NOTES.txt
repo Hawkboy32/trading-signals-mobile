@@ -96,41 +96,46 @@ AAR bytecode, not just docs, since docs/summaries proved stale on more than one 
 
 === IDEA: cover-screen widget for the Z Flip 6, queued for Saturday 2026-08-08 ===
 User's phone is a Samsung Galaxy Z Flip 6 ("[redacted-device-name]" — the same device the widget was
-already verified on, see the widget section above). Initial assumption (below, wrong — see
-CORRECTION) was that cover-screen widgets just reuse the standard Android AppWidget framework
-with a smaller layout. Tried adding the existing widget directly (long-press cover screen) —
-it doesn't appear at all, prompting real research rather than continued guessing.
+already verified on, see the widget section above). This went through two rounds of research —
+recording both so the wrong turn isn't silently repeated:
 
-**CORRECTION, researched properly (2026-08-06):** Samsung does NOT let arbitrary third-party
-apps' widgets onto the Z Flip cover screen through the standard Android widget system at all —
-it's restricted to a small Samsung-curated allowlist of apps, not something a third-party app
-can opt into via a normal `AppWidgetProviderInfo` declaration (which is exactly what this app's
-existing widget already correctly does — the app isn't doing anything wrong, Samsung's
-restriction is the actual blocker). No first-party path exists for this app to appear there.
+**Round 1 (wrong):** assumed cover-screen widgets just reuse the standard Android AppWidget
+framework with a smaller layout — tried adding the existing widget directly (long-press cover
+screen), it didn't appear. Follow-up research concluded Samsung restricts cover-screen widgets
+to a curated allowlist with no first-party path, and proposed two third-party workarounds
+(Good Lock/MultiStar's "run the full app" route, or CoverWidgets, a third-party app needing
+Android's Accessibility Service). User correctly flagged Accessibility Service as too much
+trust to hand a third-party app for a cosmetic feature — right call, that permission is exactly
+the kind commonly abused by malware since it can read the whole screen and simulate input.
 
-Two real workarounds found, NEITHER needs code changes on our end:
-- **Good Lock + MultiStar** (official Samsung tooling, free, Galaxy/Play Store) — runs the
-  FULL app (not a compact widget) scaled down onto the cover screen via a "Launcher widget
-  box" (Settings > Cover screen > Widgets, after configuring MultiStar). Official and free, but
-  it's the whole scrollable app UI shrunk down, not a purpose-built compact card — Samsung's
-  own docs note apps "not optimized for the cover screen often don't scale properly."
-- **CoverWidgets** (third-party, ijp.app, on Google Play) — purpose-built for adding a REAL app
-  widget (like the one already built here) to the cover screen, working around Samsung's
-  restriction via Android's Accessibility Service. Closer to what's actually wanted, but
-  explicitly labeled experimental by its own developer ("some widgets may have compatibility
-  issues or may not display as expected") and requires granting Accessibility Service — a
-  broad, sensitive permission worth being deliberate about even for a reasonable-sounding
-  third-party tool.
-Sources: https://ijp.app/apps/coverwidgets/ ,
-https://www.sammobile.com/news/run-any-app-on-galaxy-z-flip-6-flip-7-fe-cover-screen/
-
-Next step whenever this gets picked up: try CoverWidgets first (closer match to what's wanted)
-since it needs no code from this project at all — install it, grant Accessibility Service, see
-if it picks up the existing "Trading Signals" widget. If that's flaky/unsatisfying, Good Lock's
-full-app-on-cover-screen route is the fallback, still zero new code. Only worth writing actual
-code (a dedicated tiny cover-screen-sized layout) if one of these workarounds proves the
-concept is worth having AND its own reliability turns out to be the limiting factor, not "does
-a widget fit on this screen at all."
+**Round 2 (correct — 2026-08-06, same day):** dug further and found Samsung DOES publish a
+real, official SDK extension for this — the "Flex Window" cover-screen widget spec
+(https://developer.samsung.com/galaxy-z/flex_window.html) — Round 1's research had conflated
+it with the separate "run a full app on the cover screen" feature. No third-party app, no
+Accessibility Service, no new trust decision — just three small additions to files that already
+exist:
+1. `res/xml/signals_widget_info.xml` (already exists) — add `widgetCategory="keyguard"`
+   (likely combinable with the existing `"home_screen"` value, e.g. `"home_screen|keyguard"` —
+   Android's widgetCategory is a flag attribute; unverified, check when building) and adjust
+   `minWidth`/`minHeight`. Samsung's own codelab uses `352dp`/`339dp` for the Z Flip5 — the Z
+   Flip6's cover screen is a bit larger, so these exact values need empirical checking/tuning
+   for this specific device, not just copied verbatim.
+2. New small XML file, e.g. `res/xml/samsung_signals_widget_info.xml`:
+   `<samsung-appwidget-provider display="sub_screen" />` — Samsung's own metadata layer, one
+   line of real content.
+3. `AndroidManifest.xml` — the existing `<receiver android:name=".widget.SignalsWidgetReceiver">`
+   block gets one more `<meta-data>` entry, `android:name="com.samsung.android.appwidget
+   .provider"`, pointing at the new XML from step 2 (alongside the existing
+   `android.appwidget.provider` meta-data already there).
+This should layer cleanly onto the existing Jetpack Glance-based widget (`SignalsWidget.kt`) —
+Glance still registers through the same underlying receiver/manifest mechanism Samsung's spec
+targets, this is manifest-level metadata, not tied to how the widget renders internally. Real
+open question, unconfirmed either way: does Glance's registration play nicely with Samsung's
+metadata layer specifically, or does something about Glance's own wiring need adjusting too —
+that's the one thing to verify empirically once building starts, not before.
+Net effort estimate: small, roughly a 30-minute change + a build/verify pass, not a big lift —
+closer in size to a config tweak than a new feature, since the existing widget already has the
+receiver, layout, and live data pipeline working.
 
 === IDEA: floating "chat head" style bubble, queued for Saturday 2026-08-08 ===
 User wants a Messenger-style bubble that floats over other apps, freely movable, open/close on
