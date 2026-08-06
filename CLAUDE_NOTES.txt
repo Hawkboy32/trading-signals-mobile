@@ -96,21 +96,41 @@ AAR bytecode, not just docs, since docs/summaries proved stale on more than one 
 
 === IDEA: cover-screen widget for the Z Flip 6, queued for Saturday 2026-08-08 ===
 User's phone is a Samsung Galaxy Z Flip 6 ("[redacted-device-name]" — the same device the widget was
-already verified on, see the widget section above), which has a small external cover screen
-alongside the main folded-open screen. Asked whether the widget needs separate code for it.
-What's actually known vs. not: Samsung's cover-screen widgets generally reuse the SAME standard
-Android AppWidget framework already in use (not a wholly separate widget system) — cover-screen
-support is mostly about the widget being able to fit/resize into that smaller canvas, and the
-existing `signals_widget_info.xml` already declares some flexibility (`resizeMode=
-"horizontal|vertical"`, a fairly small `minWidth`/`minHeight`). So it's genuinely possible the
-current widget already works on the cover screen with zero code changes, or needs only a
-smaller/alternate layout variant rather than a second widget provider. NOT confident about
-Samsung/One UI's exact cover-screen quirks though — this is foldable-specific behavior that's
-shifted across One UI versions, worth being honest about the uncertainty rather than assuming.
-**First step, free, costs nothing**: just try long-pressing the cover screen and adding the
-existing "Trading Signals" widget the same way it was added to the main screen — tells us
-immediately whether this needs real work at all before any code gets written. Nothing built
-yet, no empirical check done yet either — do that first when this gets picked up Saturday.
+already verified on, see the widget section above). Initial assumption (below, wrong — see
+CORRECTION) was that cover-screen widgets just reuse the standard Android AppWidget framework
+with a smaller layout. Tried adding the existing widget directly (long-press cover screen) —
+it doesn't appear at all, prompting real research rather than continued guessing.
+
+**CORRECTION, researched properly (2026-08-06):** Samsung does NOT let arbitrary third-party
+apps' widgets onto the Z Flip cover screen through the standard Android widget system at all —
+it's restricted to a small Samsung-curated allowlist of apps, not something a third-party app
+can opt into via a normal `AppWidgetProviderInfo` declaration (which is exactly what this app's
+existing widget already correctly does — the app isn't doing anything wrong, Samsung's
+restriction is the actual blocker). No first-party path exists for this app to appear there.
+
+Two real workarounds found, NEITHER needs code changes on our end:
+- **Good Lock + MultiStar** (official Samsung tooling, free, Galaxy/Play Store) — runs the
+  FULL app (not a compact widget) scaled down onto the cover screen via a "Launcher widget
+  box" (Settings > Cover screen > Widgets, after configuring MultiStar). Official and free, but
+  it's the whole scrollable app UI shrunk down, not a purpose-built compact card — Samsung's
+  own docs note apps "not optimized for the cover screen often don't scale properly."
+- **CoverWidgets** (third-party, ijp.app, on Google Play) — purpose-built for adding a REAL app
+  widget (like the one already built here) to the cover screen, working around Samsung's
+  restriction via Android's Accessibility Service. Closer to what's actually wanted, but
+  explicitly labeled experimental by its own developer ("some widgets may have compatibility
+  issues or may not display as expected") and requires granting Accessibility Service — a
+  broad, sensitive permission worth being deliberate about even for a reasonable-sounding
+  third-party tool.
+Sources: https://ijp.app/apps/coverwidgets/ ,
+https://www.sammobile.com/news/run-any-app-on-galaxy-z-flip-6-flip-7-fe-cover-screen/
+
+Next step whenever this gets picked up: try CoverWidgets first (closer match to what's wanted)
+since it needs no code from this project at all — install it, grant Accessibility Service, see
+if it picks up the existing "Trading Signals" widget. If that's flaky/unsatisfying, Good Lock's
+full-app-on-cover-screen route is the fallback, still zero new code. Only worth writing actual
+code (a dedicated tiny cover-screen-sized layout) if one of these workarounds proves the
+concept is worth having AND its own reliability turns out to be the limiting factor, not "does
+a widget fit on this screen at all."
 
 === IDEA: floating "chat head" style bubble, queued for Saturday 2026-08-08 ===
 User wants a Messenger-style bubble that floats over other apps, freely movable, open/close on
