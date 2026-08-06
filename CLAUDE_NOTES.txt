@@ -137,6 +137,50 @@ Net effort estimate: small, roughly a 30-minute change + a build/verify pass, no
 closer in size to a config tweak than a new feature, since the existing widget already has the
 receiver, layout, and live data pipeline working.
 
+=== IDEA: mobile app upgrade backlog, discussed 2026-08-06, queued for Saturday 2026-08-08 ===
+Five candidate upgrades came up when asked "how else could we upgrade the mobile app" — all
+"could be ideal" per the user, recorded here so none get lost even though only the local-
+notification one below got fully designed out in this conversation:
+1. **Trade history / P&L screen** — the app currently only shows "what would happen right now"
+   (live signal state), nothing about actual executed trades. `live_trades.db` (backtester repo)
+   already has real entry/exit/P&L per trade; a "Recent Trades" screen would surface it.
+2. **Open positions + live unrealized P&L** — a real architectural decision, not a small add:
+   the mobile backend is deliberately read-only with ZERO broker-credential access today (see
+   signal_service.py's own docstring) — this would mean deciding to give it real broker read
+   access for the first time. Also what the local-notification design below hooks into.
+3. **Roster health at a glance** — status (active/paused), win rate, trade count vs. the
+   demotion thresholds (`min_live_trades`, `losing_streak_threshold`, etc. — see backtester's
+   `roster.py`), so "why is this paused / is it learning yet" is visible without asking.
+4. **Bigger chart on tap** — the sparkline's a fixed 30 points; tapping a card could open a
+   proper zoomable chart with the VWAP/band levels actually drawn on it, not just the text
+   readout.
+5. **Mobile local notifications tied to open positions — the one actually designed out below.**
+
+**Local notifications — full design (2026-08-06):** Started as "build our own notification
+system, migrate away from ntfy." Considered Firebase Cloud Messaging (FCM) as the "real push"
+answer — genuinely the only way to notify a CLOSED/backgrounded Android app instantly without
+some OS-level relay, that's a platform reality not an ntfy-specific limitation. But the user's
+own reframing found a better fit for THIS specific need: skip server-side push entirely.
+
+The app already has a refresh function (`widget_service.dart`'s `refreshWidget()`) that runs on
+TWO existing schedules — every 60s while open, AND every ~15min in the background via
+WorkManager (the same mechanism already powering the home-screen widget, see that section
+above). If that function compares "what it just fetched" against "what it fetched last time"
+(once item #2 above — open positions — exists to compare against) and notices something
+material changed (a new position opened), it can fire a LOCAL notification right there in Dart
+— `flutter_local_notifications` package, no Firebase project, no ntfy, no device tokens, no new
+backend code at all. Needs the standard `POST_NOTIFICATIONS` runtime permission on Android 13+
+(a normal permission prompt, nothing like Accessibility Service's sensitivity).
+Honest tradeoff: not instant like real push — effectively immediate while the app's open (60s
+poll), but bound by Android's real background-work floor (~15min) when closed, the same limit
+already found/documented building the widget. Fine for "a position opened," not fine if the
+goal was "notify me the literal instant a trade fires."
+**This is mobile-only and does NOT replace the separate self-hosted-ntfy item elsewhere in this
+file** — that one is about the DESKTOP bot's own instant trade-open/close alerts, sent the
+moment auto_trader.py actually executes something. Different question, both can coexist.
+Depends on #2 (open positions) existing first to have something to compare against, though the
+same mechanism could just as easily watch for signal changes instead/first if #2 gets deferred.
+
 === IDEA: floating "chat head" style bubble, queued for Saturday 2026-08-08 ===
 User wants a Messenger-style bubble that floats over other apps, freely movable, open/close on
 demand — like the home-screen widget but not tied to the home screen. Discussed two Android
