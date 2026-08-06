@@ -104,6 +104,32 @@ AAR bytecode, not just docs, since docs/summaries proved stale on more than one 
   goal here).
 - iOS: architecturally free (Flutter), but nothing iOS-specific has been touched/tested.
 
+=== MORE CARD DETAIL: SPARKLINE, FRESHNESS/SOURCE, STRATEGY LEVELS (2026-08-06) ===
+User wanted enough on-screen detail to "watch what [the bot's] looking at" rather than just the
+final BUY/SELL/HOLD + conviction badge. Backend (`backtester`'s `current_signals.py` +
+`auto_trader.py`, and this repo's own `signal_service.py` direct-fetch fallback) now publishes
+three more fields per combo, all zero extra cost (pure math/labels over data already fetched
+that cycle): `source` (which feed the bars came from - a broker nickname + "(live)", "Polygon",
+or "Polygon (direct)" when there's no fresh auto_trader.py snapshot to reuse), `recent_closes`
+(last 30 closes), and `levels` (the strategy's own reference values - VWAP + deviation/threshold
+for VWAP Mean Reversion, band mid/lower/upper for Bollinger Mean Reversion, via a new optional
+`Strategy.levels()` hook - see backtester's own CLAUDE_NOTES.txt for that side).
+`flutter_app`: `TradingSignal` (lib/models/signal.dart) carries the three new fields.
+`SignalListScreen`'s card (lib/screens/signal_list_screen.dart) now shows, in order: a
+dependency-free sparkline of `recentCloses` (custom `_SparklinePainter`, no chart package added),
+the trade price re-labeled "Would buy/sell near $X" when non-HOLD (was just "Price: $X" always),
+a one-line `levels` readout, and a freshness ("Xm ago", turns orange past 5 minutes) + source
+label row - the freshness readout exists specifically so the same kind of frozen-data staleness
+already found and fixed on the live-bot side (see backtester's CLAUDE_NOTES.txt, 2026-08-05) would
+be visually obvious here too, not just in bot logs.
+Deliberately NOT added in this pass (would need new scope): position/entry-price/unrealized P&L
+- the backend is read-only and has no broker-credential access; would need a real decision
+about whether to add one, not bundled into a "just show more of what's already computed" pass.
+Not yet verified against a running backend/emulator - no Flutter/Dart toolchain or pandas/backtester
+install available in the session that made this change; syntax was hand-reviewed and the Python
+side was `ast.parse`-checked, but this needs an actual `flutter run` + live backend pass before
+trusting it fully.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
 Claude's own auto-memory system (separate from this file) has the fuller session-by-session
 history of how this got built. This .txt is the lightweight, quick-orientation summary — see

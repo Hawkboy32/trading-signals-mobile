@@ -140,9 +140,56 @@ class _SignalCard extends StatelessWidget {
     }
   }
 
+  /// "as of Xm ago" from computedAt, or null if unparseable/blank. A rough,
+  /// no-dependency freshness readout - the actual staleness policy lives
+  /// backend-side (see signal_service.SNAPSHOT_STALE_SECONDS); this is just
+  /// so the user can SEE how current a card is, e.g. spotting the same
+  /// frozen-close bug that motivated this whole detail pass in the first
+  /// place (see backtester's CLAUDE_NOTES.txt).
+  String? _freshnessLabel() {
+    if (signal.computedAt.isEmpty) return null;
+    final ts = DateTime.tryParse(signal.computedAt);
+    if (ts == null) return null;
+    final age = DateTime.now().toUtc().difference(ts.toUtc());
+    if (age.inSeconds < 0) return 'just now';
+    if (age.inMinutes < 1) return '${age.inSeconds}s ago';
+    if (age.inHours < 1) return '${age.inMinutes}m ago';
+    return '${age.inHours}h ${age.inMinutes % 60}m ago';
+  }
+
+  bool get _isStale {
+    if (signal.computedAt.isEmpty) return false;
+    final ts = DateTime.tryParse(signal.computedAt);
+    if (ts == null) return false;
+    return DateTime.now().toUtc().difference(ts.toUtc()).inMinutes >= 5;
+  }
+
+  /// Turns the strategy's raw levels map into a short, ordered, human-readable
+  /// line - covers the two currently-live strategies (VWAP MR, Bollinger MR)
+  /// by key name, falls back to a generic "key: value" join for anything else
+  /// so a future strategy's levels() still shows SOMETHING without a UI change.
+  String _levelsLine(Map<String, double> levels) {
+    if (levels.containsKey('vwap')) {
+      final vwap = levels['vwap']!.toStringAsFixed(4);
+      final dev = levels['deviation_pct']?.toStringAsFixed(2);
+      final thresh = levels['entry_threshold_pct']?.toStringAsFixed(2);
+      return 'VWAP $vwap  ·  dev ${dev ?? '?'}% (entry at $thresh%)';
+    }
+    if (levels.containsKey('lower') && levels.containsKey('upper')) {
+      final lower = levels['lower']!.toStringAsFixed(4);
+      final mid = levels['mid']?.toStringAsFixed(4);
+      final upper = levels['upper']!.toStringAsFixed(4);
+      return 'Bands $lower — $upper  (mid $mid)';
+    }
+    return levels.entries.map((e) => '${e.key}: ${e.value.toStringAsFixed(4)}').join('  ·  ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final conviction = signal.conviction;
+    final freshness = _freshnessLabel();
+    final closes = signal.recentCloses;
+    final levels = signal.levels;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Padding(
@@ -178,10 +225,22 @@ class _SignalCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
+            if (closes != null && closes.length >= 2) ...[
+              SizedBox(
+                height: 36,
+                width: double.infinity,
+                child: _Sparkline(values: closes, color: _badgeColor),
+              ),
+              const SizedBox(height: 6),
+            ],
             Row(
               children: [
-                Text('Price: ${signal.price.toStringAsFixed(4)}',
-                    style: const TextStyle(fontSize: 13)),
+                Text(
+                  signal.signal == 'hold'
+                      ? 'Price: ${signal.price.toStringAsFixed(4)}'
+                      : '${signal.signal == 'buy' ? 'Would buy' : 'Would sell'} near ${signal.price.toStringAsFixed(4)}',
+                  style: const TextStyle(fontSize: 13),
+                ),
                 const Spacer(),
                 if (conviction != null)
                   Text('Conviction: ${(conviction * 100).toStringAsFixed(0)}%',
@@ -200,6 +259,31 @@ class _SignalCard extends StatelessWidget {
                 ),
               ),
             ],
+            if (levels != null && levels.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(_levelsLine(levels),
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12)),
+            ],
+            if (freshness != null || signal.source != null) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  if (freshness != null)
+                    Icon(Icons.access_time,
+                        size: 12, color: _isStale ? Colors.orange : Colors.grey[500]),
+                  if (freshness != null) const SizedBox(width: 3),
+                  if (freshness != null)
+                    Text(freshness,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: _isStale ? Colors.orange : Colors.grey[500],
+                        )),
+                  if (freshness != null && signal.source != null) const SizedBox(width: 10),
+                  if (signal.source != null)
+                    Text(signal.source!, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                ],
+              ),
+            ],
             if (signal.error != null) ...[
               const SizedBox(height: 6),
               Text(signal.error!, style: const TextStyle(color: Colors.orange, fontSize: 12)),
@@ -209,4 +293,56 @@ class _SignalCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Minimal dependency-free line-chart of recent closes, so a glance at a
+/// card shows what price action the strategy is actually reacting to - no
+/// chart package needed for a single trend line.
+class _Sparkline extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+
+  const _Sparkline({required this.values, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(painter: _SparklinePainter(values: values, color: color));
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final Color color;
+
+  _SparklinePainter({required this.values, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final minV = values.reduce((a, b) => a < b ? a : b);
+    final maxV = values.reduce((a, b) => a > b ? a : b);
+    final range = (maxV - minV).abs() < 1e-9 ? 1.0 : (maxV - minV);
+
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final y = size.height - ((values[i] - minV) / range) * size.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.color != color;
 }

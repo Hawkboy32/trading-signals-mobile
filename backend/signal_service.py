@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from backtester import current_signals
-from backtester.conviction import compute_conviction
+from backtester.conviction import compute_conviction, compute_levels
 from backtester.data import PolygonClient
 from backtester.strategies import build_strategy
 from backtester.strategy import Bar, Signal
@@ -22,6 +22,10 @@ from backtester.strategy import Bar, Signal
 # any strategy's default window, even on daily bars. Not required_lookback()
 # -driven, matching the live bot exactly (see auto_trader.py).
 LOOKBACK_DAYS = 90
+
+# Trailing closes returned for the app's sparkline - matches auto_trader.py's
+# own RECENT_CLOSES_COUNT so a snapshot hit and a direct fetch look identical.
+RECENT_CLOSES_COUNT = 30
 
 # 3x the shared 120s poll interval - same staleness margin auto_trader.py's
 # own singleton guard uses for its heartbeat. Beyond this, auto_trader.py is
@@ -38,6 +42,9 @@ class SignalResult:
     price: float
     computed_at: str  # ISO timestamp of the bar this was computed from
     error: str | None = None
+    source: str | None = None  # which feed the bars came from, e.g. "MyAlpaca (live)" or "Polygon"
+    recent_closes: list[float] | None = None  # trailing closes for the app's sparkline
+    levels: dict[str, float] | None = None  # strategy's own reference levels, see Strategy.levels()
 
 
 def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | None:
@@ -67,6 +74,9 @@ def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | Non
         ticker=ticker, strategy_name=strategy_name, signal=entry["signal"],
         conviction=entry.get("conviction"), price=entry.get("price", 0.0),
         computed_at=entry.get("bar_timestamp", ""),
+        source=entry.get("source"),  # entry.get(...) so older snapshots without these keys still parse
+        recent_closes=entry.get("recent_closes"),
+        levels=entry.get("levels"),
     )
 
 
@@ -110,11 +120,15 @@ def compute_current_signal(
         )
         signal = strategy.on_bar(bars, current)
         conviction = compute_conviction(strategy, bars, current) if signal != Signal.HOLD else None
+        levels = compute_levels(strategy, bars, current)
 
         return SignalResult(
             ticker=ticker, strategy_name=strategy_name, signal=signal.value,
             conviction=conviction, price=float(current.close),
             computed_at=current.timestamp.isoformat(),
+            source="Polygon (direct)",  # no fresh auto_trader.py snapshot to reuse - see _signal_from_snapshot
+            recent_closes=[float(c) for c in bars["close"].tail(RECENT_CLOSES_COUNT)],
+            levels=levels,
         )
     except Exception as e:  # noqa: BLE001
         # A single combo failing (bad ticker, transient Polygon error) must
