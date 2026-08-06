@@ -9,6 +9,9 @@ class TradingSignal {
   final double price;
   final String computedAt;
   final String? error;
+  final String? source; // which feed the bars came from, e.g. "MyAlpaca (live)" or "Polygon"
+  final List<double>? recentCloses; // trailing closes for the sparkline
+  final Map<String, double>? levels; // strategy's own reference levels (VWAP, bands, ...)
 
   TradingSignal({
     required this.ticker,
@@ -18,6 +21,9 @@ class TradingSignal {
     required this.price,
     required this.computedAt,
     required this.error,
+    required this.source,
+    required this.recentCloses,
+    required this.levels,
   });
 
   factory TradingSignal.fromJson(Map<String, dynamic> json) {
@@ -29,6 +35,12 @@ class TradingSignal {
       price: (json['price'] as num?)?.toDouble() ?? 0.0,
       computedAt: json['computed_at'] as String? ?? '',
       error: json['error'] as String?,
+      source: json['source'] as String?,
+      recentCloses: (json['recent_closes'] as List<dynamic>?)
+          ?.map((e) => (e as num).toDouble())
+          .toList(),
+      levels: (json['levels'] as Map<String, dynamic>?)
+          ?.map((k, v) => MapEntry(k, (v as num).toDouble())),
     );
   }
 }
