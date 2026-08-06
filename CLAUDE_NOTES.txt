@@ -94,6 +94,40 @@ Glance 1.1.1's `currentState()` lives under `androidx.glance`, not `androidx.gla
 reified `<T>` overload, needs an explicit `Intent`. All confirmed against the actual installed
 AAR bytecode, not just docs, since docs/summaries proved stale on more than one of these.
 
+=== IDEA: floating "chat head" style bubble, queued for Saturday 2026-08-08 ===
+User wants a Messenger-style bubble that floats over other apps, freely movable, open/close on
+demand — like the home-screen widget but not tied to the home screen. Discussed two Android
+implementation paths before laying this out:
+1. Raw SYSTEM_ALERT_WINDOW overlay (what Messenger originally used) — truly freeform placement,
+   but needs the special "display over other apps" permission (historically malware-associated,
+   a dedicated settings toggle not a normal permission dialog) AND a persistent background
+   service to keep the view alive, which aggressive battery optimization on some phones
+   (Samsung/Xiaomi especially) likes to kill unless manually exempted.
+2. **Chosen direction — Android's native Bubbles API (Android 11+)**, the official Google-built
+   replacement for the chat-heads pattern: no overlay permission, no custom service — Android
+   manages the bubble's lifecycle itself. User's own framing, confirmed correct: since a bubble
+   IS a notification with `BubbleMetadata` attached, a button in the app (or the existing
+   widget's tap, or a Settings toggle) just needs to POST that notification to summon the
+   bubble. Tapping it expands into a small Activity (the bubble's content); tapping again
+   collapses; swipe dismisses.
+   Design sketch:
+   - A small Activity to serve as bubble content, manifest-flagged bubble-compatible
+     (`android:resizeableActivity="true"` + related flags) — reuse the existing signal cards,
+     probably trimmed (skip the sparkline given the smaller space) rather than a second UI.
+   - A trigger (button/toggle) that posts a `Notification` with `Notification.Builder
+     .setBubbleMetadata(...)` targeting that Activity via PendingIntent.
+   - User must grant "Allow bubbles" once (Settings > Apps > [app] > Notifications > Bubbles) —
+     the standard, much less alarming notification-bubble toggle, not the special overlay grant.
+   **One real unknown, flagged honestly rather than assumed** — Android's Bubbles API was
+   originally built strictly for messaging-style "Conversation" notifications (tied to a
+   Person/shortcut); later versions relaxed this, but whether a plain non-chat notification
+   bubbles reliably across every Android version/OEM skin (Samsung One UI reshapes notification
+   behavior more than most) hasn't been verified. Quick empirical check on the real emulator
+   needed before committing further, not before planning — cheap to find out once building starts.
+   Nothing built yet — this is a design record from a planning discussion, not a decision to
+   implement a specific way. See backtester's own CLAUDE_NOTES.txt "PLAN: Saturday 2026-08-08"
+   entry for the fuller day's queue this sits alongside.
+
 === KNOWN LIMITATIONS / NOT YET BUILT ===
 - Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo
   customization in the app itself, matches the "just mirror what the bot trades" v1 design.
