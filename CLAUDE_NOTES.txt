@@ -94,6 +94,24 @@ Glance 1.1.1's `currentState()` lives under `androidx.glance`, not `androidx.gla
 reified `<T>` overload, needs an explicit `Intent`. All confirmed against the actual installed
 AAR bytecode, not just docs, since docs/summaries proved stale on more than one of these.
 
+=== IDEA: cover-screen widget for the Z Flip 6, queued for Saturday 2026-08-08 ===
+User's phone is a Samsung Galaxy Z Flip 6 ("[redacted-device-name]" — the same device the widget was
+already verified on, see the widget section above), which has a small external cover screen
+alongside the main folded-open screen. Asked whether the widget needs separate code for it.
+What's actually known vs. not: Samsung's cover-screen widgets generally reuse the SAME standard
+Android AppWidget framework already in use (not a wholly separate widget system) — cover-screen
+support is mostly about the widget being able to fit/resize into that smaller canvas, and the
+existing `signals_widget_info.xml` already declares some flexibility (`resizeMode=
+"horizontal|vertical"`, a fairly small `minWidth`/`minHeight`). So it's genuinely possible the
+current widget already works on the cover screen with zero code changes, or needs only a
+smaller/alternate layout variant rather than a second widget provider. NOT confident about
+Samsung/One UI's exact cover-screen quirks though — this is foldable-specific behavior that's
+shifted across One UI versions, worth being honest about the uncertainty rather than assuming.
+**First step, free, costs nothing**: just try long-pressing the cover screen and adding the
+existing "Trading Signals" widget the same way it was added to the main screen — tells us
+immediately whether this needs real work at all before any code gets written. Nothing built
+yet, no empirical check done yet either — do that first when this gets picked up Saturday.
+
 === IDEA: floating "chat head" style bubble, queued for Saturday 2026-08-08 ===
 User wants a Messenger-style bubble that floats over other apps, freely movable, open/close on
 demand — like the home-screen widget but not tied to the home screen. Discussed two Android
