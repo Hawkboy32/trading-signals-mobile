@@ -99,6 +99,17 @@ AAR bytecode, not just docs, since docs/summaries proved stale on more than one 
   customization in the app itself, matches the "just mirror what the bot trades" v1 design.
 - No auto-start-on-login for the backend process (see above) — needs a manual restart after this
   PC reboots, unlike the trading bot which already has this solved.
+- **No watchdog/auto-restart if the backend process dies mid-session (2026-08-06, pending —
+  not urgent, add to the list for whenever).** Hit for real: the uvicorn process was found
+  simply not running (no crash log, no error visible — it just wasn't there any more), leaving
+  the app showing "Could not reach backend" until manually restarted. Once actually running
+  again it worked immediately, including a real request from the phone over Tailscale — so this
+  isn't a code or connectivity bug, purely "nothing notices or restarts it if it ever stops."
+  auto_trader.py already has this solved (`_another_instance_alive()` + the login auto-start
+  shortcut, see backtester's CLAUDE_NOTES.txt) — the mobile backend needs the same treatment:
+  either a proper Windows service/scheduled-task registration with restart-on-failure, or at
+  minimum some persistent stdout/stderr logging so a future "why did it stop" has an actual
+  trail to look at instead of nothing.
 - Not signed with a real release keystore (uses Flutter's default debug-signing fallback) — fine
   for personal sideloading, would need a proper keystore before any wider distribution (not a
   goal here).
