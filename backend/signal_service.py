@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from backtester import current_signals
+from backtester.accounts import infer_asset_class
 from backtester.conviction import compute_conviction, compute_levels
 from backtester.data import PolygonClient
+from backtester.oanda_data import OandaDataClient, OandaError
 from backtester.strategies import build_strategy
 from backtester.strategy import Bar, Signal
 
@@ -99,13 +101,34 @@ def compute_current_signal(
     try:
         to_date = date.today()
         from_date = to_date - timedelta(days=LOOKBACK_DAYS)
-        bars = client.get_aggregates(
-            ticker=ticker,
-            from_date=from_date.isoformat(),
-            to_date=to_date.isoformat(),
-            multiplier=1,
-            timespan="minute",
-        )
+        bars = None
+        source_label = "Polygon (direct)"
+        # Same preference as auto_trader.py's own fallback chain: OANDA for
+        # forex once OANDA_API_KEY is set (data only - IG stays the only
+        # forex execution venue; see CLAUDE_NOTES.txt). This is the SECOND
+        # line of defense - the shared snapshot above already carries
+        # auto_trader.py's own OANDA-sourced bars when it's running; this
+        # only matters if auto_trader.py itself isn't up.
+        if infer_asset_class(ticker) == "forex":
+            try:
+                bars = OandaDataClient().get_live_bars(
+                    ticker=ticker, from_date=from_date.isoformat(), to_date=to_date.isoformat(),
+                    multiplier=1, timespan="minute",
+                )
+                if bars.empty:
+                    bars = None
+                else:
+                    source_label = "OANDA (direct)"
+            except OandaError:
+                bars = None  # OANDA_API_KEY not set yet - fall through to Polygon
+        if bars is None:
+            bars = client.get_aggregates(
+                ticker=ticker,
+                from_date=from_date.isoformat(),
+                to_date=to_date.isoformat(),
+                multiplier=1,
+                timespan="minute",
+            )
         if bars.empty or len(bars) < 2:
             return SignalResult(
                 ticker=ticker, strategy_name=strategy_name, signal=Signal.HOLD.value,
@@ -126,7 +149,7 @@ def compute_current_signal(
             ticker=ticker, strategy_name=strategy_name, signal=signal.value,
             conviction=conviction, price=float(current.close),
             computed_at=current.timestamp.isoformat(),
-            source="Polygon (direct)",  # no fresh auto_trader.py snapshot to reuse - see _signal_from_snapshot
+            source=source_label,  # no fresh auto_trader.py snapshot to reuse - see _signal_from_snapshot
             recent_closes=[float(c) for c in bars["close"].tail(RECENT_CLOSES_COUNT)],
             levels=levels,
         )
