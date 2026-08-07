@@ -263,19 +263,25 @@ implementation paths before laying this out:
 === KNOWN LIMITATIONS / NOT YET BUILT ===
 - Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo
   customization in the app itself, matches the "just mirror what the bot trades" v1 design.
-- No auto-start-on-login for the backend process (see above) — needs a manual restart after this
-  PC reboots, unlike the trading bot which already has this solved.
-- **No watchdog/auto-restart if the backend process dies mid-session (2026-08-06, pending —
-  not urgent, add to the list for whenever).** Hit for real: the uvicorn process was found
-  simply not running (no crash log, no error visible — it just wasn't there any more), leaving
-  the app showing "Could not reach backend" until manually restarted. Once actually running
-  again it worked immediately, including a real request from the phone over Tailscale — so this
-  isn't a code or connectivity bug, purely "nothing notices or restarts it if it ever stops."
-  auto_trader.py already has this solved (`_another_instance_alive()` + the login auto-start
-  shortcut, see backtester's CLAUDE_NOTES.txt) — the mobile backend needs the same treatment:
-  either a proper Windows service/scheduled-task registration with restart-on-failure, or at
-  minimum some persistent stdout/stderr logging so a future "why did it stop" has an actual
-  trail to look at instead of nothing.
+- **DONE 2026-08-07 — backend watchdog + auto-start.** Was: no watchdog/auto-restart if the
+  backend process died mid-session, found for real 2026-08-06 (uvicorn simply stopped, no crash
+  log, left the app showing "Could not reach backend" until manually restarted — once actually
+  running again it worked immediately including a real request from the phone over Tailscale,
+  so never a code/connectivity bug, purely "nothing notices or restarts it if it ever stops").
+  Fixed: new `backend/watchdog.py` — launches signal_api's uvicorn, then loops on a 30s interval
+  checking BOTH the OS process handle (`proc.poll()`) AND an actual `/health` request, relaunching
+  on either failure (same "don't trust one soft signal alone" lesson as auto_trader.py's own
+  singleton-guard fix the same day — a process can be alive but hung, or dead but still "look"
+  fine to a check that only asks the OS). Windows Task Scheduler was ruled out (needs admin
+  rights in this environment, already discovered setting up auto_trader.py's own auto-start —
+  see backtester's CLAUDE_NOTES.txt) so this uses the same no-admin-needed mechanism instead: a
+  Startup-folder shortcut (`MobileBackendAutoStart.lnk`, pythonw.exe watchdog.py, mirrors
+  `TradingBotAutoStart.lnk`'s exact shape) that launches the watchdog once at login, which then
+  stays running and re-checks for the rest of the session — covers both "PC rebooted" and "died
+  at 3pm while still logged in," which a login-only shortcut alone wouldn't.
+  Verified live: killed the running uvicorn process out from under a running watchdog, confirmed
+  it was unreachable, then confirmed it self-recovered on the watchdog's own next check cycle
+  with no manual action — genuinely new PID, correctly parented, no duplicate/leftover processes.
 - Not signed with a real release keystore (uses Flutter's default debug-signing fallback) — fine
   for personal sideloading, would need a proper keystore before any wider distribution (not a
   goal here).
