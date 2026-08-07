@@ -190,6 +190,40 @@ Open detail to decide when actually building, not settled yet: should the existi
 one consistent trust boundary rather than two tiers), and how long a login session/token should
 last before requiring full re-login+TOTP again.
 
+=== IDEA: group signal cards by market open/closed, queued for Saturday 2026-08-08 ===
+User's ask (2026-08-07): sort the main screen so combos whose market is currently OPEN sit at
+the top (with which account(s) actually trade them), and combos whose market is CLOSED sit
+below — rather than one flat list where an equity showing yesterday's frozen close (market
+shut) looks the same at a glance as one that's genuinely live right now.
+
+**Real design question worth flagging up front**: "is the market open for this ticker" is
+per-ACCOUNT information (`broker_account.get_market_clock()`), which the mobile backend can't
+get itself — it's deliberately zero-broker-credential-access (same boundary flagged for the
+open-positions idea elsewhere in this file). Two ways to get the data without crossing that
+boundary:
+1. **Recommended — reuse the exact pattern already proven today for source/recent_closes/
+   levels.** auto_trader.py ALREADY computes this every cycle (`market_closed_account_ids` in
+   `run_cycle()`, via real broker calls it already has credentials for) — just publish it.
+   Extend `current_signals.record_signal()` with two more fields: `market_open: bool` (derived
+   from the same market-clock check already happening) and `trading_accounts: list[str]`
+   (broker nicknames that actually TRADE this ticker — not the same thing as the existing
+   `source` field, which is where the DATA came from; e.g. DDOG's source is "MyAlpaca (live)"
+   but it actually TRADES on both MyAlpaca and IBKR Paper — this would be the first place that
+   second account becomes visible in the app at all). Mobile backend passes both through
+   unchanged in `_signal_from_snapshot()`, same as the other three fields. Zero new credential
+   access, zero new backend architecture — purely additive to something that already exists.
+2. Standalone alternative (not preferred): compute standard market-hours calendars locally in
+   the mobile backend (NYSE 9:30-4pm ET Mon-Fri minus holidays, forex Sun 5pm-Fri 5pm ET) — no
+   broker credentials needed either, but duplicates calendar logic that already exists correctly
+   broker-side, and would need to independently track holidays. Falls back to this only if
+   there's a reason auto_trader.py can't be the source of truth.
+Flutter side: two sections in the SAME list (not a separate screen, per the user's own framing
+of "top of the list... below") — a "Market Open" header, its cards, then a "Market Closed"
+header, then those. Each card shows `trading_accounts` (e.g. "MyAlpaca, IBKR Paper" vs
+"MyIGPaper") so it's clear which account(s) a given signal actually applies to.
+Nothing built yet — this is a design record from a planning discussion, not a decision to
+implement a specific way.
+
 === IDEA: mobile app upgrade backlog, discussed 2026-08-06, queued for Saturday 2026-08-08 ===
 Five candidate upgrades came up when asked "how else could we upgrade the mobile app" — all
 "could be ideal" per the user, recorded here so none get lost even though only the local-
