@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Samsung's own Flex Window cover-screen widget metadata, layered on top of
+     the standard Android appwidget-provider (signals_widget_info.xml) - not a
+     separate widget, just the extra declaration Samsung's launcher needs to
+     offer this one on the Z Flip's cover screen. See
+     developer.samsung.com/galaxy-z/flex_window.html. -->
+<samsung-appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    display="sub_screen" />

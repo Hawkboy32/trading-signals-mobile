@@ -3,14 +3,24 @@
      passive backstop only. The REAL refresh path is the app/WorkManager
      explicitly calling HomeWidget.updateWidget() (see widget_service.dart)
      whenever fresh data is actually fetched, so this is set generously
-     high rather than relied on for freshness. -->
+     high rather than relied on for freshness.
+
+     minWidth/minHeight bumped to 352dp/339dp (from 180dp/110dp) and
+     widgetCategory gained "keyguard", per Samsung's own Flex Window
+     cover-screen widget spec (developer.samsung.com/galaxy-z/flex_window.html)
+     - required for the widget to be eligible for the Z Flip's cover screen at
+     all, see samsung_signals_widget_info.xml. Shouldn't visibly change the
+     home-screen appearance: targetCellWidth/targetCellHeight (Android 12+)
+     take priority over minWidth/minHeight there, confirmed via Android's own
+     widget-layout docs - verify this holds after building, don't just trust
+     the docs blindly. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:initialLayout="@layout/signals_widget_loading"
-    android:minWidth="180dp"
-    android:minHeight="110dp"
+    android:minWidth="352dp"
+    android:minHeight="339dp"
     android:targetCellWidth="3"
     android:targetCellHeight="2"
     android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen"
+    android:widgetCategory="home_screen|keyguard"
     android:updatePeriodMillis="1800000">
 </appwidget-provider>
