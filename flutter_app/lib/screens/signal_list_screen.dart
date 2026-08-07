@@ -5,6 +5,7 @@ import '../models/signal.dart';
 import '../services/widget_service.dart';
 import 'roster_health_screen.dart';
 import 'settings_screen.dart';
+import 'trade_history_screen.dart';
 
 const _pollInterval = Duration(seconds: 60);
 
@@ -61,6 +62,15 @@ class _SignalListScreenState extends State<SignalListScreen> {
       appBar: AppBar(
         title: const Text('Trading Signals'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Trade history',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const TradeHistoryScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.insights),
             tooltip: 'Roster health',
