@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/roster.dart';
 import '../models/signal.dart';
+import '../models/trade.dart';
 
 /// Talks to the read-only signal API (Mobile_App/backend). The backend
 /// address is always user-configured (a Tailscale IP/hostname specific to
@@ -42,6 +43,20 @@ class ApiClient {
       throw Exception('Backend returned HTTP ${resp.statusCode}');
     }
     return RosterResponse.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  static Future<List<TradeRecord>> fetchTrades() async {
+    final base = await getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/trades'))
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('Backend returned HTTP ${resp.statusCode}');
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (body['trades'] as List<dynamic>? ?? [])
+        .map((t) => TradeRecord.fromJson(t as Map<String, dynamic>))
+        .toList();
   }
 
   /// Returns true if the backend is reachable, for the settings screen's

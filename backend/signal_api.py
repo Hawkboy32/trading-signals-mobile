@@ -20,6 +20,7 @@ from fastapi import FastAPI
 
 from backtester.auto_trader_state import load_control
 from backtester.data import PolygonClient
+from backtester.live_trades import list_recent_trades
 from backtester.roster import load_roster
 from signal_service import compute_current_signal
 
@@ -125,3 +126,12 @@ def roster() -> dict:
         if e.status in ROSTER_STATUSES
     ]
     return {"entries": entries, "config": asdict(state.config)}
+
+
+@app.get("/trades")
+def trades() -> dict:
+    """Most recent closed round trips (real trading activity only - see
+    list_recent_trades' own docstring for why the old 'mock-1' test rows are
+    excluded). Read-only, reads fresh on every request - a local sqlite read,
+    not a Polygon call."""
+    return {"trades": list_recent_trades(limit=50)}
