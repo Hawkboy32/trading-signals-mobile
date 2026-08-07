@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/roster.dart';
 import '../models/signal.dart';
 
 /// Talks to the read-only signal API (Mobile_App/backend). The backend
@@ -30,6 +31,17 @@ class ApiClient {
       throw Exception('Backend returned HTTP ${resp.statusCode}');
     }
     return SignalsResponse.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  static Future<RosterResponse> fetchRoster() async {
+    final base = await getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/roster'))
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('Backend returned HTTP ${resp.statusCode}');
+    }
+    return RosterResponse.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   /// Returns true if the backend is reachable, for the settings screen's
