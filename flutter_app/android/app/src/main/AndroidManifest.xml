@@ -35,7 +35,10 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- Home-screen widget (see widget/SignalsWidget.kt + widget_service.dart) -->
+        <!-- Home-screen widget (see widget/SignalsWidget.kt + widget_service.dart).
+             Also eligible for the Z Flip's cover screen via the second
+             meta-data entry below (Samsung's Flex Window spec) - same
+             receiver, same widget, no separate registration needed. -->
         <receiver android:name=".widget.SignalsWidgetReceiver"
                   android:exported="true">
             <intent-filter>
@@ -43,6 +46,8 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider"
                        android:resource="@xml/signals_widget_info"/>
+            <meta-data android:name="com.samsung.android.appwidget.provider"
+                       android:resource="@xml/samsung_signals_widget_info"/>
         </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
