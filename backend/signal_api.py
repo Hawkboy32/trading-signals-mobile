@@ -23,6 +23,8 @@ from backtester.data import PolygonClient
 from backtester.roster import load_roster
 from signal_service import compute_current_signal
 
+ROSTER_STATUSES = ("active", "paused")
+
 # Load by absolute path, cwd-independent, same as auto_trader.py/scan_runner.py.
 # Must happen before PolygonClient() is ever instantiated (in _refresh_loop).
 load_dotenv(Path(__file__).resolve().parent.parent.parent / "backtester" / ".env")
@@ -45,7 +47,7 @@ def _current_combos() -> list[tuple[str, str, dict]]:
 
     roster = load_roster()
     for entry in roster.entries:
-        if entry.status in ("active", "paused"):
+        if entry.status in ROSTER_STATUSES:
             combos.append((entry.ticker, entry.strategy_name, entry.params))
 
     control = load_control()
@@ -99,3 +101,27 @@ def signals() -> dict:
             "signals": _cache["signals"],
             "last_refreshed": _cache["last_refreshed"],
         }
+
+
+@app.get("/roster")
+def roster() -> dict:
+    """Roster health: each active/paused combo's live win rate, trade count,
+    and pause reason, plus the demotion thresholds they're judged against
+    (roster.py's RosterConfig - min_live_trades, losing_streak_threshold,
+    etc.) so the app can show "why is this paused / how close to being
+    judged" instead of a bare status label. Read-only, reads fresh on every
+    request - a local file read, not a Polygon call, so this doesn't need
+    the cached refresh loop /signals has."""
+    state = load_roster()
+    entries = [
+        {
+            "ticker": e.ticker,
+            "strategy_name": e.strategy_name,
+            "status": e.status,
+            "pause_reason": e.pause_reason,
+            "live_stats": e.live_stats,
+        }
+        for e in state.entries
+        if e.status in ROSTER_STATUSES
+    ]
+    return {"entries": entries, "config": asdict(state.config)}

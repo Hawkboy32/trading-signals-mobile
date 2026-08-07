@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/signal.dart';
 import '../services/widget_service.dart';
+import 'roster_health_screen.dart';
 import 'settings_screen.dart';
 
 const _pollInterval = Duration(seconds: 60);
@@ -60,6 +61,15 @@ class _SignalListScreenState extends State<SignalListScreen> {
       appBar: AppBar(
         title: const Text('Trading Signals'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.insights),
+            tooltip: 'Roster health',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RosterHealthScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () async {
