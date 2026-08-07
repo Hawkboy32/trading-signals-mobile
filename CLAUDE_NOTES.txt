@@ -137,6 +137,51 @@ Net effort estimate: small, roughly a 30-minute change + a build/verify pass, no
 closer in size to a config tweak than a new feature, since the existing widget already has the
 receiver, layout, and live data pipeline working.
 
+=== IDEA: mobile login (matching dashboard) + remote stop/re-arm, queued for Saturday 2026-08-08 ===
+Started as "should we add a remote emergency stop button" — the mobile backend is currently
+strictly read-only (never touches control.json/roster.json, never places an order), so this
+would be the FIRST time it gets any write capability at all. That surfaced a real gap worth
+fixing at the same time: the mobile backend has ZERO authentication on any endpoint today —
+fine while it's read-only, not fine once it can stop/start the bot.
+
+**Real finding while scoping this**: 2FA is ALREADY FULLY BUILT in the backtester repo
+(`src/backtester/two_factor.py` — TOTP enrollment, verification, recovery codes, all backed by
+the OS keyring, see that file's own docstring for the full design) but was NEVER actually wired
+into anything, not even the dashboard's own login. Its own docstring practically predicts this
+exact moment: "2FA earns its keep the moment the dashboard is reachable from elsewhere... a
+stolen password alone would be enough to arm a trading bot." That's where we are now — mobile
+is reachable over Tailscale and about to gain a control capability.
+
+**Agreed design (2026-08-06):**
+1. **Dashboard (backtester repo)**: wire the existing, unused `two_factor.py` into `app.py`'s
+   login flow for real — TOTP prompt after password, plus an enrollment UI (QR code + one-time
+   recovery codes) somewhere in Settings. User confirmed: yes, do this for the dashboard too,
+   not mobile-only — low incremental cost since the module's fully built already, just unused.
+2. **Mobile backend, new `/login` endpoint**: username + password + TOTP code, verified against
+   the SAME `auth_config.yaml` the dashboard already uses (bcrypt hash, via streamlit_authenticator
+   — no separate credential store needed, same login the user already has) plus
+   `two_factor.verify_code()`. Returns a session token.
+3. **Mobile backend, new `/kill` and `/rearm` endpoints**: require the session token (proves
+   "logged in") AND the password sent fresh in the SAME request (proves "I mean this specific
+   action right now", not just relying on a standing session) — user's own refinement, protects
+   against both a fat-fingered tap AND makes remote re-arm safe enough to actually include
+   (re-arming resumes money-moving activity, meaningfully riskier than stopping, so it earns the
+   same friction rather than being left dashboard-only). Password only for this per-action
+   check, not full TOTP again each time — that lives at login, not on every button press.
+   Both call the SAME functions the dashboard's own kill switch already uses
+   (`auto_trader_state.trigger_kill_switch()` and its counterpart for re-enabling).
+4. **Flutter app**: a login screen (username/password/TOTP fields), token stored via
+   `flutter_secure_storage` (Android Keystore-backed — same "credentials never touch plaintext"
+   standard already used everywhere else in this project, e.g. broker creds via the OS keyring).
+   Stop/Start buttons, each opening a password-confirmation dialog before actually calling
+   `/kill` or `/rearm` — never a bare single tap for either. Show current armed/disarmed state
+   clearly (read `control.enabled`/`control.killed`) rather than just always offering both
+   buttons blindly.
+Open detail to decide when actually building, not settled yet: should the existing read-only
+`/signals`/`/health` endpoints also require login now that auth exists at all (probably yes, for
+one consistent trust boundary rather than two tiers), and how long a login session/token should
+last before requiring full re-login+TOTP again.
+
 === IDEA: mobile app upgrade backlog, discussed 2026-08-06, queued for Saturday 2026-08-08 ===
 Five candidate upgrades came up when asked "how else could we upgrade the mobile app" — all
 "could be ideal" per the user, recorded here so none get lost even though only the local-
