@@ -94,7 +94,15 @@ Glance 1.1.1's `currentState()` lives under `androidx.glance`, not `androidx.gla
 reified `<T>` overload, needs an explicit `Intent`. All confirmed against the actual installed
 AAR bytecode, not just docs, since docs/summaries proved stale on more than one of these.
 
-=== IDEA: cover-screen widget for the Z Flip 6, queued for Saturday 2026-08-08 ===
+=== DONE 2026-08-07 — cover-screen widget for the Z Flip 6 ===
+UPDATE: built and shipped ahead of Saturday (turned out small enough to just do). User confirmed
+on the real Z Flip 6: works perfectly. Verified end to end — Samsung's Flex Window metadata
+(samsung-appwidget-provider + widgetCategory=keyguard + the Flip5's own 352dp/339dp size values,
+which the Flip6 shares since it's the same 720x748 cover-screen resolution) was all that was
+needed on top of the existing widget; no regression to the home-screen version either
+(targetCellWidth/targetCellHeight did take priority there as expected, confirmed not just
+assumed). See git history (Mobile_App commit "Add Z Flip cover-screen widget support") for the
+exact diff. Original research/design notes below, kept for the reasoning trail.
 User's phone is a Samsung Galaxy Z Flip 6 ("[redacted-device-name]" — the same device the widget was
 already verified on, see the widget section above). This went through two rounds of research —
 recording both so the wrong turn isn't silently repeated:
