@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/signal.dart';
+import '../services/auth_client.dart';
 import '../services/widget_service.dart';
+import 'login_screen.dart';
 import 'roster_health_screen.dart';
 import 'settings_screen.dart';
 import 'trade_history_screen.dart';
@@ -21,12 +23,18 @@ class _SignalListScreenState extends State<SignalListScreen> {
   String? _error;
   bool _loading = true;
   Timer? _timer;
+  Map<String, bool>? _controlState;
+  bool _controlActionInFlight = false;
 
   @override
   void initState() {
     super.initState();
     _refresh();
-    _timer = Timer.periodic(_pollInterval, (_) => _refresh());
+    _refreshControlState();
+    _timer = Timer.periodic(_pollInterval, (_) {
+      _refresh();
+      _refreshControlState();
+    });
   }
 
   @override
@@ -56,12 +64,123 @@ class _SignalListScreenState extends State<SignalListScreen> {
     }
   }
 
+  Future<void> _refreshControlState() async {
+    final state = await AuthClient.fetchControlState();
+    if (!mounted || state == null) return;
+    setState(() => _controlState = state);
+  }
+
+  bool get _isArmed => (_controlState?['enabled'] ?? false) && !(_controlState?['killed'] ?? false);
+
+  /// Stop/re-arm entry point: ensures a login first (if needed), then always
+  /// requires the password fresh in THIS dialog even if already logged in -
+  /// a standing session alone is never enough to trigger the action, only to
+  /// unlock being asked for the password. Guards against a fat-fingered tap
+  /// either way.
+  Future<void> _handleControlTap() async {
+    if (!await AuthClient.isLoggedIn()) {
+      if (!mounted) return;
+      final loggedIn = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      if (loggedIn != true) return;
+    }
+    if (!mounted) return;
+
+    final armed = _isArmed;
+    final password = await _showPasswordConfirmDialog(
+      title: armed ? 'Stop trading?' : 'Re-arm trading?',
+      message: armed
+          ? 'This immediately stops the bot from opening or managing any new trades. '
+              'Enter your password to confirm.'
+          : 'This resumes live trading on the account(s) already configured on the desktop. '
+              'Enter your password to confirm.',
+      confirmLabel: armed ? 'Stop trading' : 'Re-arm trading',
+      isDestructive: armed,
+    );
+    if (password == null || !mounted) return;
+
+    setState(() => _controlActionInFlight = true);
+    try {
+      if (armed) {
+        await AuthClient.stopTrading(password);
+      } else {
+        await AuthClient.rearmTrading(password);
+      }
+      await _refreshControlState();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(armed ? 'Trading stopped.' : 'Trading re-armed.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _controlActionInFlight = false);
+    }
+  }
+
+  Future<String?> _showPasswordConfirmDialog({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required bool isDestructive,
+  }) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(message),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
+              onSubmitted: (v) => Navigator.of(context).pop(v),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(
+            style: isDestructive ? FilledButton.styleFrom(backgroundColor: Colors.red) : null,
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Trading Signals'),
         actions: [
+          IconButton(
+            icon: _controlActionInFlight
+                ? const SizedBox(
+                    height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : Icon(
+                    Icons.power_settings_new,
+                    color: _controlState == null
+                        ? Colors.grey
+                        : (_isArmed ? Colors.green : Colors.red),
+                  ),
+            tooltip: _controlState == null
+                ? 'Trading status unknown'
+                : (_isArmed ? 'Stop trading' : 'Re-arm trading'),
+            onPressed: _controlActionInFlight ? null : _handleControlTap,
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Trade history',

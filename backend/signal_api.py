@@ -16,9 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
 
-from backtester.auto_trader_state import load_control
+import _auth
+from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.data import PolygonClient
 from backtester.live_trades import list_recent_trades
 from backtester.roster import load_roster
@@ -87,11 +89,18 @@ def _start_refresh_loop() -> None:
 
 @app.get("/health")
 def health() -> dict:
+    # enabled/killed are exposed unauthenticated - same read-only trust level as
+    # the rest of this file's GET endpoints, and the app needs them just to
+    # decide whether to show a Stop or a Start button. Actually CHANGING either
+    # value still requires the full /kill or /rearm login flow below.
+    control = load_control()
     with _cache_lock:
         return {
             "status": "ok",
             "last_refreshed": _cache["last_refreshed"],
             "last_error": _cache["last_error"],
+            "enabled": control.enabled,
+            "killed": control.killed,
         }
 
 
@@ -135,3 +144,73 @@ def trades() -> dict:
     excluded). Read-only, reads fresh on every request - a local sqlite read,
     not a Polygon call."""
     return {"trades": list_recent_trades(limit=50)}
+
+
+# --------------------------------------------------------------------------
+# Auth + write-capable endpoints. Everything above this line is read-only and
+# always was; /kill and /rearm are the first endpoints that can change
+# anything, so they're gated behind a real login (see _auth.py) - a bearer
+# token proves "I logged in with password+TOTP earlier", and the password
+# sent fresh on EACH of /kill and /rearm proves "I mean this specific action
+# right now", not just a standing session left open on an unlocked phone.
+# --------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    totp_code: str
+
+
+class ActionRequest(BaseModel):
+    password: str
+
+
+def _require_session(authorization: str | None = Header(default=None)) -> str:
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    username = _auth.resolve_session(token)
+    if username is None:
+        raise HTTPException(status_code=401, detail="Not logged in, or session expired - log in again.")
+    return username
+
+
+@app.post("/login")
+def login(req: LoginRequest) -> dict:
+    ok, error = _auth.verify_login(req.username, req.password, req.totp_code)
+    if not ok:
+        raise HTTPException(status_code=401, detail=error)
+    token, expires_at = _auth.create_session(req.username)
+    return {"token": token, "expires_at": expires_at}
+
+
+@app.post("/kill")
+def kill(req: ActionRequest, username: str = Depends(_require_session)) -> dict:
+    """Immediate remote stop. Requires a valid session (proves "logged in
+    earlier") AND the password fresh in this request (proves "I mean this
+    specific tap right now") - protects against both a fat-fingered press and
+    a standing session on an unlocked phone."""
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    trigger_kill_switch()
+    return {"ok": True, "control": {"enabled": False, "killed": True}}
+
+
+@app.post("/rearm")
+def rearm(req: ActionRequest, username: str = Depends(_require_session)) -> dict:
+    """Re-enables trading (enabled=True, killed=False) on the ALREADY-RUNNING
+    auto_trader.py process - deliberately does not launch a new process the
+    way the dashboard's Start button can, since the process is expected to
+    already be alive via the startup-folder shortcut + singleton guard. If
+    the process itself is down, that's a separate concern for the desktop
+    side, not something this remote endpoint tries to fix. Re-arming resumes
+    money-moving activity, meaningfully riskier than stopping, so it gets the
+    same password-confirmation friction as /kill, not a lighter check."""
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    control = load_control()
+    control.enabled = True
+    control.killed = False
+    save_control(control)
+    return {"ok": True, "control": {"enabled": True, "killed": False}}

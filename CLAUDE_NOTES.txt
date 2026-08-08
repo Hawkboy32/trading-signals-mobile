@@ -145,7 +145,45 @@ Net effort estimate: small, roughly a 30-minute change + a build/verify pass, no
 closer in size to a config tweak than a new feature, since the existing widget already has the
 receiver, layout, and live data pipeline working.
 
-=== IDEA: mobile login (matching dashboard) + remote stop/re-arm, queued for Saturday 2026-08-08 ===
+=== DONE 2026-08-08 — mobile login (matching dashboard) + remote stop/re-arm ===
+Built as designed below, with the two open questions resolved:
+- **/signals and /health stayed unauthenticated.** Chose the lighter trust boundary — viewing
+  is harmless and login only gates the two actions that can actually change something. `/health`
+  gained `enabled`/`killed` fields (unauthenticated, same read-only level as everything else it
+  already returns) so the app can show the correct Stop/Re-arm button without a login round trip
+  just to render the icon.
+- **Session lifetime: 24 hours**, shorter than the dashboard's 7-day cookie — a phone is more
+  likely to be lost/stolen than the laptop, and periodic re-login is low-friction on mobile.
+  Sessions are in-memory only in the backend process (not persisted to disk), so a backend
+  restart (e.g. via watchdog.py) logs every mobile session out — accepted tradeoff, a bearer
+  token never sits in a file.
+Files: `backend/_auth.py` (new — password check against the SAME `auth_config.yaml`/bcrypt hash
+the dashboard uses, `two_factor.verify_code()`, in-memory session tokens), `backend/signal_api.py`
+(`/login`, `/kill`, `/rearm`, `/health` extended), `flutter_app/lib/services/auth_client.dart`
+(new), `flutter_app/lib/screens/login_screen.dart` (new), `flutter_app/lib/screens/
+signal_list_screen.dart` (power-icon button, colour-coded armed/disarmed, password-confirmation
+dialog before either action). Mobile login REQUIRES TOTP unconditionally (unlike the dashboard,
+where 2FA is optional until enrolled) — this is a brand-new write-capable surface, so it starts
+at the strictest posture; if the account isn't 2FA-enrolled yet, `/login` fails with a message
+pointing at the dashboard's Settings page.
+**Real build issue hit and fixed**: `flutter_secure_storage` latest (11.0.0) requires
+`compileSdk 37`, this project is on 36 (bumping it wasn't worth the ripple risk for one plugin) —
+pinned to `flutter_secure_storage ^9.2.4` instead, which builds clean against 36.
+**Verified**: `_auth.py`'s full branch logic (wrong password / not-enrolled / wrong TOTP /
+correct login, session create+resolve+expiry) smoke-tested directly; `/login`+`/kill`+`/rearm`
+endpoint wiring verified via FastAPI TestClient with `trigger_kill_switch`/`save_control` MOCKED
+so the test never touched the real, live bot's control.json (confirmed after — bot still
+running, `enabled: true, killed: false`, untouched). Backend restarted for real (killed the
+uvicorn process, watchdog relaunched it within ~30s picking up the new code — a nice live proof
+the watchdog itself still works). On the real emulator: debug APK built and installed, main
+signal list still renders correctly with the new green/red power icon reflecting real
+`/health` state, tapping it opens the login screen, submitting wrong credentials shows the
+real backend's error message inline with no crash. Could NOT test an actual successful
+login/kill/rearm through the UI — needs the real dashboard password, which this assistant
+doesn't have and shouldn't be typing in. Worth clicking through personally once (log in for
+real, try Stop then Re-arm) to confirm the last mile end-to-end.
+
+=== SUPERSEDED — original design notes, kept for the reasoning trail ===
 Started as "should we add a remote emergency stop button" — the mobile backend is currently
 strictly read-only (never touches control.json/roster.json, never places an order), so this
 would be the FIRST time it gets any write capability at all. That surfaced a real gap worth
