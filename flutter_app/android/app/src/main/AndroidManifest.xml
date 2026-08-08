@@ -38,11 +38,11 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- Bubble-compatible content Activity - the empirical spike for the
-             "floating chat-head bubble" idea (see bubble/BubbleTrigger.kt and
-             CLAUDE_NOTES.txt). android:allowEmbedded + resizeableActivity are
-             required by the Bubbles API for an Activity to be launchable as a
-             bubble; documentLaunchMode="always" gives each bubble its own task. -->
+        <!-- Bubble content Activity for the floating "chat head" bubble (see
+             bubble/BubbleTrigger.kt and CLAUDE_NOTES.txt). android:allowEmbedded
+             + resizeableActivity are required by the Bubbles API for an Activity
+             to be launchable as a bubble; documentLaunchMode="always" gives each
+             bubble its own task. -->
         <activity
             android:name=".bubble.BubbleActivity"
             android:theme="@style/LaunchTheme"

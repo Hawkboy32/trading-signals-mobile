@@ -92,16 +92,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Divider(),
             const SizedBox(height: 8),
             Text(
-              'Floating bubble - empirical spike test (Android 11+; grant '
-              'notification permission and "Allow bubbles" if prompted). '
-              'Not the real feature yet, just testing whether bubbles work '
-              'at all on this device.',
+              'Floating bubble (Android 11+). First tap posts a notification; '
+              'long-press it and mark it "Priority" (or Settings > Apps > '
+              'Trading Signals > Notifications > Conversations) to make it '
+              'float from then on - a one-time step Android requires and this '
+              'app cannot skip on your behalf.',
               style: TextStyle(color: Colors.grey[600], fontSize: 12),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
               onPressed: () => _bubbleChannel.invokeMethod('showBubble'),
-              child: const Text('Test floating bubble'),
+              child: const Text('Show floating bubble'),
             ),
           ],
         ),

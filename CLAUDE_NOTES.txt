@@ -517,6 +517,26 @@ implementation paths before laying this out:
    harmless to leave in place (a Settings-only test button, no user-facing surface) but the real,
    trimmed production UI was deliberately NOT started given this finding.
 
+   **PRODUCTION UI BUILT 2026-08-08 — user chose to accept the friction.** Replaced the
+   `BubbleActivity.kt` placeholder ("Bubble spike OK...") with the real content: full ticker/
+   signal list (not capped at 4 like the small home-screen widget — a bubble has more room),
+   the kill-switch STOPPED badge, open-positions/P&L line, last-updated line, and a tappable
+   "Open app" row, all read straight from the same `HomeWidgetPlugin.getData(context)`
+   SharedPreferences the widget already reads (`HomeWidgetPlugin.getData()` confirmed via the
+   plugin's own source as the same underlying store `saveWidgetData` writes to) — no new data
+   path, no embedded Flutter view (deliberately, same reasoning as the spike: a bubble is a
+   small, short-lived popup, not worth a full Flutter engine for a read-only list). Extracted
+   the parsing/formatting (`parseSignals`, `colorFor`, `relativeTime`) that both the widget and
+   the bubble need into a shared `widget/SignalsData.kt` rather than duplicating it — `colorFor`
+   returns a plain ARGB `Int` so it works for both Glance's `Color(...)` and a classic View's
+   `setTextColor(Int)` without either surface needing a dependency the other doesn't have.
+   `BubbleTrigger.kt`'s notification text and the Settings screen's button/copy were updated
+   from "spike test" wording to the real feature, with the Settings copy now explicitly telling
+   the user the one-time Priority step (see above) rather than leaving them to discover it.
+   Verified with a clean `flutter build apk --debug`; not yet re-verified on the real device —
+   confirm the bubble actually floats after marking Priority, and that the content renders
+   correctly, before considering this fully done.
+
 === KNOWN LIMITATIONS / NOT YET BUILT ===
 - Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo
   customization in the app itself, matches the "just mirror what the bot trades" v1 design.
