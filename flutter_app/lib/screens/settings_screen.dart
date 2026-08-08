@@ -47,6 +47,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(context).pop();
   }
 
+  /// Was previously a fire-and-forget `invokeMethod` call with no await and
+  /// no error handling - any native-side exception (e.g. a blocked
+  /// notification channel, a missing permission) would surface only as an
+  /// unhandled-exception print to the debug console, completely invisible in
+  /// a release build. Awaited + caught now so a failure actually shows
+  /// something instead of silently doing nothing.
+  Future<void> _showBubble() async {
+    try {
+      await _bubbleChannel.invokeMethod('showBubble');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Notification sent - check your notification shade.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not show bubble: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -101,7 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: () => _bubbleChannel.invokeMethod('showBubble'),
+              onPressed: _showBubble,
               child: const Text('Show floating bubble'),
             ),
           ],
