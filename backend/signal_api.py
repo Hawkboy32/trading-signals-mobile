@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 import _auth
+from backtester import notifications
 from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.data import PolygonClient
 from backtester.live_trades import list_recent_trades
@@ -194,6 +195,7 @@ def kill(req: ActionRequest, username: str = Depends(_require_session)) -> dict:
     if not _auth.verify_password(username, req.password):
         raise HTTPException(status_code=401, detail="Incorrect password.")
     trigger_kill_switch()
+    notifications.notify_kill_switch_engaged("the mobile app")
     return {"ok": True, "control": {"enabled": False, "killed": True}}
 
 
