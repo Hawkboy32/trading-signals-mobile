@@ -17,17 +17,22 @@ private const val SHORTCUT_ID = "trading_signals_bubble_shortcut"
 private const val NOTIFICATION_ID = 4242
 
 /**
- * Posts a bubble-eligible notification - the empirical test for whether
- * Android's Bubbles API actually works on this device/OEM skin at all (see
- * BubbleActivity.kt's own docstring, and Mobile_App/CLAUDE_NOTES.txt's
- * "floating chat-head bubble" design entry). Pure platform APIs, deliberately
- * no androidx.core dependency added just for this spike.
+ * Posts the bubble-eligible notification that summons the floating Trading
+ * Signals bubble (BubbleActivity.kt). Pure platform APIs, no androidx.core
+ * dependency needed for this.
  *
  * Requires API 30+ (Android 11) - bubbles exist from API 29 but need a
  * Person-attached, shortcut-backed, MessagingStyle notification to reliably
  * bubble on real devices rather than just showing as a normal notification;
- * a plain notification with only setBubbleMetadata() is the unreliable path
- * this spike exists to avoid guessing about.
+ * a plain notification with only setBubbleMetadata() is not reliable enough
+ * on its own (confirmed via the empirical spike - see
+ * Mobile_App/CLAUDE_NOTES.txt's "floating chat-head bubble" entry).
+ *
+ * Android will only actually float this as a bubble once its conversation
+ * has been marked Priority by the user (long-press the notification, or
+ * Settings > Apps > Trading Signals > Notifications > Conversations) - an
+ * app cannot self-promote to that status, so the first tap of this always
+ * just shows a normal notification until that one-time step is done.
  */
 object BubbleTrigger {
     fun show(context: Context) {
@@ -38,7 +43,7 @@ object BubbleTrigger {
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Floating bubble (test)", NotificationManager.IMPORTANCE_HIGH,
+                CHANNEL_ID, "Floating bubble", NotificationManager.IMPORTANCE_HIGH,
             )
             nm.createNotificationChannel(channel)
         }
@@ -68,14 +73,14 @@ object BubbleTrigger {
 
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setContentTitle("Trading Signals")
-            .setContentText("Tap to open the floating bubble (spike test)")
+            .setContentText("Tap to open the floating bubble")
             .setSmallIcon(context.applicationInfo.icon)
             .setShortcutId(SHORTCUT_ID)
             .setBubbleMetadata(bubbleMetadata)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setStyle(
                 Notification.MessagingStyle(person)
-                    .addMessage("Bubble spike test", System.currentTimeMillis(), person),
+                    .addMessage("Tap to open your signals", System.currentTimeMillis(), person),
             )
             .build()
 

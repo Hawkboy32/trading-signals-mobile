@@ -24,7 +24,6 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import es.antonborri.home_widget.HomeWidgetGlanceState
 import es.antonborri.home_widget.HomeWidgetGlanceStateDefinition
-import org.json.JSONArray
 
 import com.blindbandit.tradingsignals.trading_signals.MainActivity
 
@@ -41,6 +40,8 @@ private fun solidColor(color: Color) = ColorProvider(day = color, night = color)
  * signals_json, written by widget_service.dart's refreshWidget() - this
  * class only ever READS the last value that was saved; it never fetches
  * anything itself (Glance widgets can't make network calls directly).
+ * Parsing/formatting is shared with the bubble content screen via
+ * SignalsData.kt, since both read the exact same saved keys.
  */
 class SignalsWidget : GlanceAppWidget() {
 
@@ -54,8 +55,7 @@ class SignalsWidget : GlanceAppWidget() {
 
     @Composable
     private fun WidgetContent(context: Context, state: HomeWidgetGlanceState) {
-        val json = state.preferences.getString("signals_json", null)
-        val rows = parseSignals(json)
+        val rows = SignalsData.parseSignals(state.preferences.getString("signals_json", null))
         val lastRefreshed = state.preferences.getString("last_refreshed", null)
         val botKilled = state.preferences.getBoolean("bot_killed", false)
         val positionsAvailable = state.preferences.getBoolean("positions_available", false)
@@ -87,15 +87,19 @@ class SignalsWidget : GlanceAppWidget() {
                     style = TextStyle(color = solidColor(Color.LightGray), fontSize = 12.sp),
                 )
             } else {
-                rows.take(4).forEach { (ticker, signal) ->
+                rows.take(4).forEach { row ->
                     Row(modifier = GlanceModifier.fillMaxWidth().padding(top = 6.dp)) {
                         Text(
-                            text = ticker,
+                            text = row.ticker,
                             style = TextStyle(color = solidColor(Color.White), fontSize = 13.sp),
                         )
                         Text(
-                            text = "  ${signal.uppercase()}",
-                            style = TextStyle(color = solidColor(colorFor(signal)), fontWeight = FontWeight.Bold, fontSize = 13.sp),
+                            text = "  ${row.signal.uppercase()}",
+                            style = TextStyle(
+                                color = solidColor(Color(SignalsData.colorFor(row.signal))),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                            ),
                         )
                     }
                 }
@@ -112,48 +116,10 @@ class SignalsWidget : GlanceAppWidget() {
                 )
             }
             Text(
-                text = relativeTime(lastRefreshed),
+                text = SignalsData.relativeTime(lastRefreshed),
                 style = TextStyle(color = solidColor(Color.Gray), fontSize = 10.sp),
                 modifier = GlanceModifier.padding(top = 6.dp),
             )
-        }
-    }
-
-    /** Best-effort "Updated Xm ago" from an ISO-8601 timestamp - a parse
-     * failure or missing value just shows nothing rather than crashing. */
-    private fun relativeTime(iso: String?): String {
-        if (iso.isNullOrBlank()) return ""
-        return try {
-            val instant = java.time.Instant.parse(iso)
-            val minutes = java.time.Duration.between(instant, java.time.Instant.now()).toMinutes()
-            when {
-                minutes < 1 -> "Updated just now"
-                minutes < 60 -> "Updated ${minutes}m ago"
-                else -> "Updated ${minutes / 60}h ago"
-            }
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
-    private fun colorFor(signal: String): Color = when (signal) {
-        "buy" -> Color(0xFF4CAF50)
-        "sell" -> Color(0xFFF44336)
-        else -> Color(0xFF9E9E9E)
-    }
-
-    /** Best-effort parse - a malformed/missing value just shows the empty
-     * state above rather than crashing the widget's render pass. */
-    private fun parseSignals(json: String?): List<Pair<String, String>> {
-        if (json.isNullOrBlank()) return emptyList()
-        return try {
-            val arr = JSONArray(json)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                obj.getString("ticker") to obj.getString("signal")
-            }
-        } catch (_: Exception) {
-            emptyList()
         }
     }
 }
