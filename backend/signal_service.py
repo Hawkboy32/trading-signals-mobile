@@ -47,6 +47,12 @@ class SignalResult:
     source: str | None = None  # which feed the bars came from, e.g. "MyAlpaca (live)" or "Polygon"
     recent_closes: list[float] | None = None  # trailing closes for the app's sparkline
     levels: dict[str, float] | None = None  # strategy's own reference levels, see Strategy.levels()
+    # market_open/trading_accounts: only ever known via the snapshot (auto_trader.py
+    # has real broker connections; this backend deliberately doesn't) - stay None
+    # on the direct-fetch fallback path below, same as an older snapshot missing
+    # these keys. None means "unknown", not "closed" - see current_signals.py.
+    market_open: bool | None = None
+    trading_accounts: list[str] | None = None
 
 
 def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | None:
@@ -79,6 +85,8 @@ def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | Non
         source=entry.get("source"),  # entry.get(...) so older snapshots without these keys still parse
         recent_closes=entry.get("recent_closes"),
         levels=entry.get("levels"),
+        market_open=entry.get("market_open"),
+        trading_accounts=entry.get("trading_accounts"),
     )
 
 

@@ -228,7 +228,40 @@ Open detail to decide when actually building, not settled yet: should the existi
 one consistent trust boundary rather than two tiers), and how long a login session/token should
 last before requiring full re-login+TOTP again.
 
-=== IDEA: group signal cards by market open/closed, queued for Saturday 2026-08-08 ===
+=== DONE 2026-08-08 — group signal cards by market open/closed ===
+Built exactly as designed below (recommended option #1). `auto_trader.py`'s `_trade_target`
+now computes `trading_accounts` (broker accounts whose linked asset class matches the ticker —
+reuses the SAME filter already governing which accounts actually get orders) and `market_open`
+(True if any of those trading accounts has its market open, False if all closed, **None** if no
+currently-linked account trades that ticker's asset class at all — "unknown", not silently
+"closed"), and passes both to `current_signals.record_signal()` (now takes two new optional
+params). `Mobile_App/backend/signal_service.py`'s `SignalResult` gained matching fields, read
+straight from the snapshot in `_signal_from_snapshot`; the direct-fetch fallback path (used when
+auto_trader.py isn't running/snapshot is stale) leaves both as None — correctly "unknown", since
+the mobile backend has no broker access to compute them itself, exactly the boundary this
+design was built to respect.
+Flutter: `models/signal.dart` gained `marketOpen`/`tradingAccounts`; `signal_list_screen.dart`'s
+`_buildBody` now groups into "Market Open" / "Market Closed" / "Unknown" section headers (in
+that order, Unknown last since it's a rare edge case) via a small `_ListItem` sum type fed to one
+flat `ListView.builder`, and each card shows a "Trades on: X, Y" line when `tradingAccounts` is
+non-empty.
+**Verified without live market hours** (it's the weekend — `auto_trader.py` early-returns before
+ever reaching `_trade_target` when every linked account's market is closed, so the real snapshot
+couldn't be freshly exercised end-to-end today): (1) the exact `market_open`/`trading_accounts`
+computation logic, extracted and run against 5 realistic scenarios with mock accounts — all-open,
+all-closed, partial-open (counts as open), forex-only-matches-IG, and no-matching-account-at-all
+(correctly None, not False) — all passed; (2) the full data chain `record_signal` ->
+`load_signals` -> `_signal_from_snapshot` -> `SignalResult`, using an isolated temp file so the
+real shared `current_signals.json` was never touched by the test; (3) `flutter analyze` clean.
+**Restarted the live `auto_trader.py` process** (with the user's explicit go-ahead — the auto-mode
+classifier correctly blocked the kill as a risky action on the live bot until confirmed) so it's
+running the new code — safe timing, Saturday, all markets closed, zero open positions. Came back
+up cleanly on the first try (new PID, fresh heartbeat, no errors) — another live proof the
+singleton-guard fix holds up. The new fields will actually start populating once a market reopens
+(IG/forex Sunday 17:00 ET, equities Monday 9:30 ET) — worth a real glance at the app then to
+confirm the grouping renders as expected, since that's the one thing that couldn't be checked today.
+
+=== SUPERSEDED — original design notes, kept for the reasoning trail ===
 User's ask (2026-08-07): sort the main screen so combos whose market is currently OPEN sit at
 the top (with which account(s) actually trade them), and combos whose market is CLOSED sit
 below — rather than one flat list where an equity showing yesterday's frozen close (market
