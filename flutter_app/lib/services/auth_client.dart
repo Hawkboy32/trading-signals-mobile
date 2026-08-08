@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/position.dart';
 import 'api_client.dart';
 
 /// Login + the two password-confirmed control actions (stop/re-arm). The
@@ -77,6 +78,31 @@ class AuthClient {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Live open positions + unrealized P&L per linked account - requires
+  /// login (same session token as /kill and /rearm) but no password
+  /// re-confirmation, since this is a read, not an action.
+  static Future<List<AccountPositions>> fetchPositions() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/positions'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load positions.'));
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (body['accounts'] as List<dynamic>? ?? [])
+        .map((e) => AccountPositions.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   static Future<void> stopTrading(String password) async {

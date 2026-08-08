@@ -5,6 +5,7 @@ import '../models/signal.dart';
 import '../services/auth_client.dart';
 import '../services/widget_service.dart';
 import 'login_screen.dart';
+import 'positions_screen.dart';
 import 'roster_health_screen.dart';
 import 'settings_screen.dart';
 import 'signal_detail_screen.dart';
@@ -196,6 +197,15 @@ class _SignalListScreenState extends State<SignalListScreen> {
                 ? 'Trading status unknown'
                 : (_isArmed ? 'Stop trading' : 'Re-arm trading'),
             onPressed: _controlActionInFlight ? null : _handleControlTap,
+          ),
+          IconButton(
+            icon: const Icon(Icons.account_balance_wallet),
+            tooltip: 'Open positions',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PositionsScreen()),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.history),

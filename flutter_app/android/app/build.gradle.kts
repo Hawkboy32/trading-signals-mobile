@@ -13,6 +13,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by flutter_local_notifications (position-open alerts, see
+        // lib/services/position_notifier.dart).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -50,6 +53,7 @@ dependencies {
     // internally (confirmed in its own build.gradle) - kept in sync so
     // there's only one glance-appwidget version resolved in the build.
     implementation("androidx.glance:glance-appwidget:1.1.1")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 flutter {
