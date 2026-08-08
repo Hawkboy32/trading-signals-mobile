@@ -380,9 +380,42 @@ implementation paths before laying this out:
    bubbles reliably across every Android version/OEM skin (Samsung One UI reshapes notification
    behavior more than most) hasn't been verified. Quick empirical check on the real emulator
    needed before committing further, not before planning — cheap to find out once building starts.
-   Nothing built yet — this is a design record from a planning discussion, not a decision to
-   implement a specific way. See backtester's own CLAUDE_NOTES.txt "PLAN: Saturday 2026-08-08"
-   entry for the fuller day's queue this sits alongside.
+
+   **SPIKE DONE 2026-08-08 — real, important finding, changes the feature's viability.** Built the
+   minimal empirical test exactly as planned: `android/.../bubble/BubbleActivity.kt` (bubble-
+   compatible content Activity), `bubble/BubbleTrigger.kt` (posts a fully-correct bubble
+   notification — notification channel with `IMPORTANCE_HIGH`, a published dynamic `ShortcutInfo`
+   with an attached `Person`, `Notification.MessagingStyle`, `BubbleMetadata` with
+   `setAutoExpandBubble(true)`), manifest entries (BubbleActivity registration,
+   `POST_NOTIFICATIONS` permission), and a temporary test button in Settings. Pure platform APIs,
+   no androidx.core dependency added.
+
+   Tested on the real emulator (API 36, stock/AOSP-style image, notification permission granted,
+   system-level Bubbles toggle confirmed ON): the notification posted successfully with zero
+   errors, and Android correctly recognized it as a real conversation (it appears in
+   Settings > Notifications > Conversations). **But no floating bubble ever appeared** — it only
+   ever showed as a normal notification in the shade. Root cause, confirmed by checking Settings
+   directly: the conversation was filed under **"Non-priority conversations"**, and Android only
+   auto-bubbles PRIORITY conversations — `setAutoExpandBubble(true)` and full Person/shortcut/
+   MessagingStyle setup are NOT enough on their own. Promoting a conversation to priority is a
+   USER action (long-press a notification -> mark Priority, or the Conversations settings page)
+   — an app cannot self-promote to priority/auto-bubble status, which is clearly a deliberate
+   anti-abuse measure (same spirit as the notification permission itself), not a bug or missing
+   flag on this app's side.
+
+   **What this actually means for the feature**: the "one clean tap and it floats" framing the
+   original idea assumed is not accurate. In practice a first-time user would need an extra,
+   somewhat obscure manual step (long-press the notification -> Priority, or navigate to
+   Settings > Notifications > Conversations) before bubbling would ever kick in — meaningfully
+   more friction than a standard permission prompt, and not something the app can prompt for or
+   automate away (there's no "request priority" API). This is exactly the kind of unverified
+   assumption the spike was built to catch before over-investing — decision now genuinely
+   belongs to the user: accept that one-time friction and build the real trimmed-signal-card UI
+   anyway, or shelve this idea in favor of something with a cleaner UX (e.g. the home-screen
+   widget/cover-screen widget already built cover a lot of the same "glanceable without opening
+   the app" need with zero extra permission steps). Nothing else built — the spike code is
+   harmless to leave in place (a Settings-only test button, no user-facing surface) but the real,
+   trimmed production UI was deliberately NOT started given this finding.
 
 === KNOWN LIMITATIONS / NOT YET BUILT ===
 - Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo

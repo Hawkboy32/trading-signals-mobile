@@ -2,6 +2,9 @@
     <!-- Needed to reach the signal backend at all (release builds don't get
          this implicitly the way debug builds do). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Runtime-requested on Android 13+ - needed to post the bubble
+         notification itself (see bubble/BubbleTrigger.kt). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="trading_signals"
         android:name="${applicationName}"
@@ -34,6 +37,19 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Bubble-compatible content Activity - the empirical spike for the
+             "floating chat-head bubble" idea (see bubble/BubbleTrigger.kt and
+             CLAUDE_NOTES.txt). android:allowEmbedded + resizeableActivity are
+             required by the Bubbles API for an Activity to be launchable as a
+             bubble; documentLaunchMode="always" gives each bubble its own task. -->
+        <activity
+            android:name=".bubble.BubbleActivity"
+            android:theme="@style/LaunchTheme"
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
+            android:documentLaunchMode="always"
+            android:exported="false"/>
 
         <!-- Home-screen widget (see widget/SignalsWidget.kt + widget_service.dart).
              Also eligible for the Z Flip's cover screen via the second

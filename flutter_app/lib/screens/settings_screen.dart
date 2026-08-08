@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/api_client.dart';
+
+const _bubbleChannel = MethodChannel('trading_signals/bubble');
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -85,6 +88,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
             const SizedBox(height: 24),
             FilledButton(onPressed: _save, child: const Text('Save')),
+            const SizedBox(height: 32),
+            const Divider(),
+            const SizedBox(height: 8),
+            Text(
+              'Floating bubble - empirical spike test (Android 11+; grant '
+              'notification permission and "Allow bubbles" if prompted). '
+              'Not the real feature yet, just testing whether bubbles work '
+              'at all on this device.',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: () => _bubbleChannel.invokeMethod('showBubble'),
+              child: const Text('Test floating bubble'),
+            ),
           ],
         ),
       ),
