@@ -94,6 +94,25 @@ Glance 1.1.1's `currentState()` lives under `androidx.glance`, not `androidx.gla
 reified `<T>` overload, needs an explicit `Intent`. All confirmed against the actual installed
 AAR bytecode, not just docs, since docs/summaries proved stale on more than one of these.
 
+**Extended 2026-08-08 — three more details on the same widget (home-screen + Z Flip cover-screen,
+both render through the same `SignalsWidget.kt` composable, so one change covers both surfaces):**
+1. **Last-updated timestamp.** `last_refreshed` was already being saved by `widget_service.dart`
+   but never rendered — added a small `relativeTime()` helper in `SignalsWidget.kt` that turns the
+   ISO timestamp into "Updated Xm ago" (falls back to nothing on a parse failure rather than
+   crashing the widget's render pass).
+2. **Open positions + total unrealized P&L.** `widget_service.dart`'s `refreshWidget()` now also
+   calls `AuthClient.fetchPositions()` (same call `position_notifier.dart` already used — no new
+   network path) when logged in, sums open count and P&L across accounts, and saves them. A
+   `positions_available` flag distinguishes "logged out, nothing to show" from "logged in with 0
+   open positions" so the line doesn't render misleadingly for a signals-only user who's never
+   logged into the mobile app. Explicitly cleared (not left stale) if the user is logged out.
+3. **Kill-switch status badge.** `refreshWidget()` also calls the existing unauthenticated
+   `AuthClient.fetchControlState()` (`/health`) and saves `bot_killed`; the widget shows a red
+   "STOPPED" badge next to the title when true, so a stopped bot is visible without opening the
+   app or the dashboard.
+Verified by a clean `flutter build apk --debug` (Kotlin + Dart both compile); not yet re-verified
+on the real device — do that before considering this fully done.
+
 === DONE 2026-08-07 — cover-screen widget for the Z Flip 6 ===
 UPDATE: built and shipped ahead of Saturday (turned out small enough to just do). User confirmed
 on the real Z Flip 6: works perfectly. Verified end to end — Samsung's Flex Window metadata

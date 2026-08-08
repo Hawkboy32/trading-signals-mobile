@@ -56,6 +56,11 @@ class SignalsWidget : GlanceAppWidget() {
     private fun WidgetContent(context: Context, state: HomeWidgetGlanceState) {
         val json = state.preferences.getString("signals_json", null)
         val rows = parseSignals(json)
+        val lastRefreshed = state.preferences.getString("last_refreshed", null)
+        val botKilled = state.preferences.getBoolean("bot_killed", false)
+        val positionsAvailable = state.preferences.getBoolean("positions_available", false)
+        val openCount = state.preferences.getInt("open_positions_count", 0)
+        val openPnl = state.preferences.getFloat("open_positions_pnl", 0f).toDouble()
 
         Column(
             modifier = GlanceModifier
@@ -64,10 +69,18 @@ class SignalsWidget : GlanceAppWidget() {
                 .padding(12.dp)
                 .clickable(actionStartActivity(Intent(context, MainActivity::class.java))),
         ) {
-            Text(
-                text = "Trading Signals",
-                style = TextStyle(color = solidColor(Color.White), fontWeight = FontWeight.Bold, fontSize = 14.sp),
-            )
+            Row(modifier = GlanceModifier.fillMaxWidth()) {
+                Text(
+                    text = "Trading Signals",
+                    style = TextStyle(color = solidColor(Color.White), fontWeight = FontWeight.Bold, fontSize = 14.sp),
+                )
+                if (botKilled) {
+                    Text(
+                        text = "  STOPPED",
+                        style = TextStyle(color = solidColor(Color(0xFFF44336)), fontWeight = FontWeight.Bold, fontSize = 12.sp),
+                    )
+                }
+            }
             if (rows.isEmpty()) {
                 Text(
                     text = "No data yet - open the app",
@@ -87,6 +100,39 @@ class SignalsWidget : GlanceAppWidget() {
                     }
                 }
             }
+            if (positionsAvailable) {
+                val pnlSign = if (openPnl >= 0) "+" else ""
+                Text(
+                    text = "$openCount open · $pnlSign${"%.2f".format(openPnl)}",
+                    style = TextStyle(
+                        color = solidColor(if (openPnl >= 0) Color(0xFF4CAF50) else Color(0xFFF44336)),
+                        fontSize = 12.sp,
+                    ),
+                    modifier = GlanceModifier.padding(top = 8.dp),
+                )
+            }
+            Text(
+                text = relativeTime(lastRefreshed),
+                style = TextStyle(color = solidColor(Color.Gray), fontSize = 10.sp),
+                modifier = GlanceModifier.padding(top = 6.dp),
+            )
+        }
+    }
+
+    /** Best-effort "Updated Xm ago" from an ISO-8601 timestamp - a parse
+     * failure or missing value just shows nothing rather than crashing. */
+    private fun relativeTime(iso: String?): String {
+        if (iso.isNullOrBlank()) return ""
+        return try {
+            val instant = java.time.Instant.parse(iso)
+            val minutes = java.time.Duration.between(instant, java.time.Instant.now()).toMinutes()
+            when {
+                minutes < 1 -> "Updated just now"
+                minutes < 60 -> "Updated ${minutes}m ago"
+                else -> "Updated ${minutes / 60}h ago"
+            }
+        } catch (_: Exception) {
+            ""
         }
     }
 

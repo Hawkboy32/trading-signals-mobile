@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:home_widget/home_widget.dart';
 
 import 'api_client.dart';
+import 'auth_client.dart';
 import 'position_notifier.dart';
 import '../models/signal.dart';
 
@@ -43,6 +44,39 @@ Future<SignalsResponse?> refreshWidget() async {
     await HomeWidget.saveWidgetData<String>('last_refreshed', data.lastRefreshed ?? '');
   } catch (_) {
     // Swallow - see doc comment above.
+  }
+
+  // Positions and kill-switch state are each optional extras layered on top
+  // of the core signals list - failures (not logged in, network hiccup) must
+  // never block the signals refresh above, so each gets its own try/catch and
+  // just leaves the widget's last saved value in place.
+  try {
+    final loggedIn = await AuthClient.isLoggedIn();
+    await HomeWidget.saveWidgetData<bool>('positions_available', loggedIn);
+    if (loggedIn) {
+      final accounts = await AuthClient.fetchPositions();
+      var openCount = 0;
+      var totalPnl = 0.0;
+      for (final account in accounts) {
+        openCount += account.positions.length;
+        for (final position in account.positions) {
+          totalPnl += position.unrealizedPl;
+        }
+      }
+      await HomeWidget.saveWidgetData<int>('open_positions_count', openCount);
+      await HomeWidget.saveWidgetData<double>('open_positions_pnl', totalPnl);
+    }
+  } catch (_) {
+    // Swallow - widget keeps showing the last known positions summary.
+  }
+
+  try {
+    final control = await AuthClient.fetchControlState();
+    if (control != null) {
+      await HomeWidget.saveWidgetData<bool>('bot_killed', control['killed'] ?? false);
+    }
+  } catch (_) {
+    // Swallow - widget keeps showing the last known kill-switch state.
   } finally {
     await HomeWidget.updateWidget(
       qualifiedAndroidName: widgetProviderQualifiedName,
