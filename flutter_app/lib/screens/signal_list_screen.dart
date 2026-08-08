@@ -7,6 +7,7 @@ import '../services/widget_service.dart';
 import 'login_screen.dart';
 import 'roster_health_screen.dart';
 import 'settings_screen.dart';
+import 'signal_detail_screen.dart';
 import 'trade_history_screen.dart';
 
 const _pollInterval = Duration(seconds: 60);
@@ -70,7 +71,9 @@ class _SignalListScreenState extends State<SignalListScreen> {
     setState(() => _controlState = state);
   }
 
-  bool get _isArmed => (_controlState?['enabled'] ?? false) && !(_controlState?['killed'] ?? false);
+  bool get _isArmed =>
+      (_controlState?['enabled'] ?? false) &&
+      !(_controlState?['killed'] ?? false);
 
   /// Stop/re-arm entry point: ensures a login first (if needed), then always
   /// requires the password fresh in THIS dialog even if already logged in -
@@ -80,9 +83,9 @@ class _SignalListScreenState extends State<SignalListScreen> {
   Future<void> _handleControlTap() async {
     if (!await AuthClient.isLoggedIn()) {
       if (!mounted) return;
-      final loggedIn = await Navigator.of(context).push<bool>(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
+      final loggedIn = await Navigator.of(
+        context,
+      ).push<bool>(MaterialPageRoute(builder: (_) => const LoginScreen()));
       if (loggedIn != true) return;
     }
     if (!mounted) return;
@@ -92,9 +95,9 @@ class _SignalListScreenState extends State<SignalListScreen> {
       title: armed ? 'Stop trading?' : 'Re-arm trading?',
       message: armed
           ? 'This immediately stops the bot from opening or managing any new trades. '
-              'Enter your password to confirm.'
+                'Enter your password to confirm.'
           : 'This resumes live trading on the account(s) already configured on the desktop. '
-              'Enter your password to confirm.',
+                'Enter your password to confirm.',
       confirmLabel: armed ? 'Stop trading' : 'Re-arm trading',
       isDestructive: armed,
     );
@@ -110,7 +113,9 @@ class _SignalListScreenState extends State<SignalListScreen> {
       await _refreshControlState();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(armed ? 'Trading stopped.' : 'Trading re-armed.')),
+        SnackBar(
+          content: Text(armed ? 'Trading stopped.' : 'Trading re-armed.'),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -143,15 +148,23 @@ class _SignalListScreenState extends State<SignalListScreen> {
               controller: controller,
               obscureText: true,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+              ),
               onSubmitted: (v) => Navigator.of(context).pop(v),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-            style: isDestructive ? FilledButton.styleFrom(backgroundColor: Colors.red) : null,
+            style: isDestructive
+                ? FilledButton.styleFrom(backgroundColor: Colors.red)
+                : null,
             onPressed: () => Navigator.of(context).pop(controller.text),
             child: Text(confirmLabel),
           ),
@@ -169,7 +182,10 @@ class _SignalListScreenState extends State<SignalListScreen> {
           IconButton(
             icon: _controlActionInFlight
                 ? const SizedBox(
-                    height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : Icon(
                     Icons.power_settings_new,
                     color: _controlState == null
@@ -202,18 +218,15 @@ class _SignalListScreenState extends State<SignalListScreen> {
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
+              await Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
               _refresh();
             },
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: _buildBody(),
-      ),
+      body: RefreshIndicator(onRefresh: _refresh, child: _buildBody()),
     );
   }
 
@@ -227,7 +240,9 @@ class _SignalListScreenState extends State<SignalListScreen> {
           const SizedBox(height: 80),
           Icon(Icons.cloud_off, size: 48, color: Colors.grey[400]),
           const SizedBox(height: 12),
-          Center(child: Text(_error!, style: const TextStyle(color: Colors.grey))),
+          Center(
+            child: Text(_error!, style: const TextStyle(color: Colors.grey)),
+          ),
         ],
       );
     }
@@ -236,7 +251,12 @@ class _SignalListScreenState extends State<SignalListScreen> {
       return ListView(
         children: const [
           SizedBox(height: 80),
-          Center(child: Text('No combos configured yet.', style: TextStyle(color: Colors.grey))),
+          Center(
+            child: Text(
+              'No combos configured yet.',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ),
         ],
       );
     }
@@ -294,7 +314,6 @@ class _SignalListScreenState extends State<SignalListScreen> {
       },
     );
   }
-
 }
 
 /// Flat representation of the grouped list - either a section header or a
@@ -369,7 +388,9 @@ class _SignalCard extends StatelessWidget {
       final upper = levels['upper']!.toStringAsFixed(4);
       return 'Bands $lower — $upper  (mid $mid)';
     }
-    return levels.entries.map((e) => '${e.key}: ${e.value.toStringAsFixed(4)}').join('  ·  ');
+    return levels.entries
+        .map((e) => '${e.key}: ${e.value.toStringAsFixed(4)}')
+        .join('  ·  ');
   }
 
   @override
@@ -380,110 +401,152 @@ class _SignalCard extends StatelessWidget {
     final levels = signal.levels;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(signal.ticker,
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text(signal.strategyName,
-                          style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: _badgeColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: _badgeColor),
-                  ),
-                  child: Text(
-                    signal.signal.toUpperCase(),
-                    style: TextStyle(color: _badgeColor, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SignalDetailScreen(signal: signal),
             ),
-            const SizedBox(height: 10),
-            if (closes != null && closes.length >= 2) ...[
-              SizedBox(
-                height: 36,
-                width: double.infinity,
-                child: _Sparkline(values: closes, color: _badgeColor),
-              ),
-              const SizedBox(height: 6),
-            ],
-            Row(
-              children: [
-                Text(
-                  signal.signal == 'hold'
-                      ? 'Price: ${signal.price.toStringAsFixed(4)}'
-                      : '${signal.signal == 'buy' ? 'Would buy' : 'Would sell'} near ${signal.price.toStringAsFixed(4)}',
-                  style: const TextStyle(fontSize: 13),
-                ),
-                const Spacer(),
-                if (conviction != null)
-                  Text('Conviction: ${(conviction * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(fontSize: 13)),
-              ],
-            ),
-            if (conviction != null) ...[
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: conviction,
-                  minHeight: 6,
-                  backgroundColor: Colors.grey[300],
-                  valueColor: AlwaysStoppedAnimation<Color>(_badgeColor),
-                ),
-              ),
-            ],
-            if (levels != null && levels.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(_levelsLine(levels),
-                  style: TextStyle(color: Colors.grey[700], fontSize: 12)),
-            ],
-            if (freshness != null || signal.source != null) ...[
-              const SizedBox(height: 6),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
                 children: [
-                  if (freshness != null)
-                    Icon(Icons.access_time,
-                        size: 12, color: _isStale ? Colors.orange : Colors.grey[500]),
-                  if (freshness != null) const SizedBox(width: 3),
-                  if (freshness != null)
-                    Text(freshness,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          signal.ticker,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          signal.strategyName,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _badgeColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _badgeColor),
+                    ),
+                    child: Text(
+                      signal.signal.toUpperCase(),
+                      style: TextStyle(
+                        color: _badgeColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (closes != null && closes.length >= 2) ...[
+                SizedBox(
+                  height: 36,
+                  width: double.infinity,
+                  child: _Sparkline(values: closes, color: _badgeColor),
+                ),
+                const SizedBox(height: 6),
+              ],
+              Row(
+                children: [
+                  Text(
+                    signal.signal == 'hold'
+                        ? 'Price: ${signal.price.toStringAsFixed(4)}'
+                        : '${signal.signal == 'buy' ? 'Would buy' : 'Would sell'} near ${signal.price.toStringAsFixed(4)}',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const Spacer(),
+                  if (conviction != null)
+                    Text(
+                      'Conviction: ${(conviction * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                ],
+              ),
+              if (conviction != null) ...[
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: conviction,
+                    minHeight: 6,
+                    backgroundColor: Colors.grey[300],
+                    valueColor: AlwaysStoppedAnimation<Color>(_badgeColor),
+                  ),
+                ),
+              ],
+              if (levels != null && levels.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _levelsLine(levels),
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                ),
+              ],
+              if (freshness != null || signal.source != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    if (freshness != null)
+                      Icon(
+                        Icons.access_time,
+                        size: 12,
+                        color: _isStale ? Colors.orange : Colors.grey[500],
+                      ),
+                    if (freshness != null) const SizedBox(width: 3),
+                    if (freshness != null)
+                      Text(
+                        freshness,
                         style: TextStyle(
                           fontSize: 11,
                           color: _isStale ? Colors.orange : Colors.grey[500],
-                        )),
-                  if (freshness != null && signal.source != null) const SizedBox(width: 10),
-                  if (signal.source != null)
-                    Text(signal.source!, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-                ],
-              ),
+                        ),
+                      ),
+                    if (freshness != null && signal.source != null)
+                      const SizedBox(width: 10),
+                    if (signal.source != null)
+                      Text(
+                        signal.source!,
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      ),
+                  ],
+                ),
+              ],
+              if (signal.tradingAccounts != null &&
+                  signal.tradingAccounts!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Trades on: ${signal.tradingAccounts!.join(', ')}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ],
+              if (signal.error != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  signal.error!,
+                  style: const TextStyle(color: Colors.orange, fontSize: 12),
+                ),
+              ],
             ],
-            if (signal.tradingAccounts != null && signal.tradingAccounts!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Trades on: ${signal.tradingAccounts!.join(', ')}',
-                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-              ),
-            ],
-            if (signal.error != null) ...[
-              const SizedBox(height: 6),
-              Text(signal.error!, style: const TextStyle(color: Colors.orange, fontSize: 12)),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -501,7 +564,9 @@ class _Sparkline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(painter: _SparklinePainter(values: values, color: color));
+    return CustomPaint(
+      painter: _SparklinePainter(values: values, color: color),
+    );
   }
 }
 

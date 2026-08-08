@@ -309,9 +309,20 @@ notification one below got fully designed out in this conversation:
 3. **Roster health at a glance** — status (active/paused), win rate, trade count vs. the
    demotion thresholds (`min_live_trades`, `losing_streak_threshold`, etc. — see backtester's
    `roster.py`), so "why is this paused / is it learning yet" is visible without asking.
-4. **Bigger chart on tap** — the sparkline's a fixed 30 points; tapping a card could open a
-   proper zoomable chart with the VWAP/band levels actually drawn on it, not just the text
-   readout.
+4. **DONE 2026-08-08 — bigger chart on tap.** Same `recentCloses` data (still 30 points, no new
+   backend field) but tapping a card now opens `signal_detail_screen.dart` — a full-screen
+   `fl_chart` LineChart (new dependency) with real axis labels and the strategy's own reference
+   levels drawn as horizontal dashed lines (VWAP as one line; Bollinger as Upper/Lower/Mid, three
+   lines), plus a legend below with each line's exact value. x-axis is bar-index (oldest->newest,
+   labelled as such) since `recentCloses` has no per-point timestamp, same honest limitation the
+   small sparkline already had. Not true pinch-zoom — with only 30 points that wouldn't add much;
+   the real upgrade is the levels overlay and axis labels the small sparkline never had room for.
+   **Bug found and fixed during verification**: fl_chart's default axis-label spacing let a
+   regular gridline label collide with the forced min/max boundary label whenever one landed
+   close to the other (visible top-left overlap in the first build) — fixed by suppressing any
+   label within 6% of the range from either edge in `getTitlesWidget`. Verified on the real
+   emulator: single-line (VWAP) and three-line (Bollinger Upper/Lower/Mid) cases both render
+   correctly post-fix, tap-in and back-navigation both work.
 5. **Mobile local notifications tied to open positions — the one actually designed out below.**
 
 **Local notifications — full design (2026-08-06):** Started as "build our own notification
