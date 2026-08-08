@@ -240,11 +240,29 @@ class _SignalListScreenState extends State<SignalListScreen> {
         ],
       );
     }
+
+    // Market Open first, then Market Closed, then Unknown (no account
+    // currently trades that ticker's asset class - rare, but shown rather
+    // than silently dropped) - per the user's own framing: "top of the list
+    // market open... below market closed".
+    final open = signals.where((s) => s.marketOpen == true).toList();
+    final closed = signals.where((s) => s.marketOpen == false).toList();
+    final unknown = signals.where((s) => s.marketOpen == null).toList();
+
+    final items = <_ListItem>[
+      if (open.isNotEmpty) _ListItem.header('Market Open'),
+      ...open.map(_ListItem.signal),
+      if (closed.isNotEmpty) _ListItem.header('Market Closed'),
+      ...closed.map(_ListItem.signal),
+      if (unknown.isNotEmpty) _ListItem.header('Unknown'),
+      ...unknown.map(_ListItem.signal),
+    ];
+
     return ListView.builder(
       padding: const EdgeInsets.all(8),
-      itemCount: signals.length + 1,
+      itemCount: items.length + 1,
       itemBuilder: (context, index) {
-        if (index == signals.length) {
+        if (index == items.length) {
           return Padding(
             padding: const EdgeInsets.all(16),
             child: Center(
@@ -257,10 +275,41 @@ class _SignalListScreenState extends State<SignalListScreen> {
             ),
           );
         }
-        return _SignalCard(signal: signals[index]);
+        final item = items[index];
+        if (item.isHeader) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+            child: Text(
+              item.header!,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[600],
+                letterSpacing: 0.5,
+              ),
+            ),
+          );
+        }
+        return _SignalCard(signal: item.signal!);
       },
     );
   }
+
+}
+
+/// Flat representation of the grouped list - either a section header or a
+/// signal card - so ListView.builder can walk one simple indexed list rather
+/// than juggling per-group index math directly in itemBuilder.
+class _ListItem {
+  final String? header;
+  final TradingSignal? signal;
+
+  _ListItem._(this.header, this.signal);
+
+  factory _ListItem.header(String text) => _ListItem._(text, null);
+  factory _ListItem.signal(TradingSignal signal) => _ListItem._(null, signal);
+
+  bool get isHeader => header != null;
 }
 
 class _SignalCard extends StatelessWidget {
@@ -421,6 +470,13 @@ class _SignalCard extends StatelessWidget {
                   if (signal.source != null)
                     Text(signal.source!, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
                 ],
+              ),
+            ],
+            if (signal.tradingAccounts != null && signal.tradingAccounts!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Trades on: ${signal.tradingAccounts!.join(', ')}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
               ),
             ],
             if (signal.error != null) ...[
