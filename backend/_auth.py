@@ -44,11 +44,33 @@ _sessions: dict[str, dict] = {}
 _sessions_lock = threading.Lock()
 
 
+def _normalize_username(username: str) -> str:
+    """Matches streamlit_authenticator's OWN AuthenticationController.login()
+    exactly (confirmed in its source: `username = username.lower().strip()`)
+    - the dashboard's session-state username, and therefore whatever identity
+    its 2FA enrollment gets stored under (two_factor.py keys purely off the
+    string it's given), is ALWAYS this normalized form, regardless of the
+    case a user originally registered with in auth_config.yaml. A real bug
+    found live 2026-08-08: auth_config.yaml's stored key was '[redacted-dashboard-username]'
+    (mixed case), the dashboard's own login normalized it to 'blindbandit'
+    for 2FA enrollment, but this module's password check did an exact-case
+    dict lookup - a mobile login typed as '[redacted-dashboard-username]' passed the password
+    check against the real config key, then failed the 2FA check because it
+    was looking for a '[redacted-dashboard-username]' enrollment that was actually stored under
+    'blindbandit'. Every identity-bearing operation below now normalizes
+    first, so mobile and dashboard always agree on who "the same user" is."""
+    return username.lower().strip()
+
+
 def _load_credentials() -> dict:
+    """Keys are normalized to match _normalize_username, so a lookup with a
+    normalized username finds the right entry regardless of what case it was
+    originally registered under in auth_config.yaml."""
     if not AUTH_CONFIG_PATH.exists():
         return {}
     config = yaml.safe_load(AUTH_CONFIG_PATH.read_text(encoding="utf-8"))
-    return (config or {}).get("credentials", {}).get("usernames", {})
+    raw = (config or {}).get("credentials", {}).get("usernames", {})
+    return {_normalize_username(k): v for k, v in raw.items()}
 
 
 def verify_password(username: str, password: str) -> bool:
@@ -56,7 +78,7 @@ def verify_password(username: str, password: str) -> bool:
     streamlit_authenticator login already uses - one password, one source of
     truth, not a second credential store to keep in sync."""
     users = _load_credentials()
-    user = users.get(username)
+    user = users.get(_normalize_username(username))
     if not user:
         return False
     stored_hash = user.get("password", "")
@@ -73,6 +95,7 @@ def verify_login(username: str, password: str, totp_code: str) -> tuple[bool, st
     module's own docstring for why TOTP isn't optional here the way it is on
     the dashboard. Returns (ok, error_message) so the API can surface which
     part actually failed rather than one generic "invalid" for every case."""
+    username = _normalize_username(username)
     if not verify_password(username, password):
         return False, "Incorrect username or password."
     if not two_factor.is_enrolled(username):
@@ -83,7 +106,11 @@ def verify_login(username: str, password: str, totp_code: str) -> tuple[bool, st
 
 
 def create_session(username: str) -> tuple[str, str]:
-    """Issues a fresh bearer token. Returns (token, iso_expires_at)."""
+    """Issues a fresh bearer token. Returns (token, iso_expires_at). Stores
+    the NORMALIZED username - see _normalize_username - so a later /kill or
+    /rearm re-check of the password (via resolve_session -> verify_password)
+    stays consistent regardless of what case the original login was typed in."""
+    username = _normalize_username(username)
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + SESSION_LIFETIME
     with _sessions_lock:

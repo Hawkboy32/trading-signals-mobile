@@ -183,6 +183,33 @@ login/kill/rearm through the UI — needs the real dashboard password, which thi
 doesn't have and shouldn't be typing in. Worth clicking through personally once (log in for
 real, try Stop then Re-arm) to confirm the last mile end-to-end.
 
+**REAL BUG FOUND AND FIXED 2026-08-08, via the user's own real-device test** — the exact
+"click through personally" test above surfaced a genuine identity mismatch. Dashboard 2FA was
+confirmed enrolled ("2FA is enabled for **blindbandit**"), but mobile login kept saying "2FA
+isn't set up yet." Root cause, confirmed by reading `streamlit_authenticator`'s own source: its
+`AuthenticationController.login()` does `username = username.lower().strip()` before anything
+else, so `st.session_state["username"]` — and therefore whatever identity the dashboard's 2FA
+enrollment gets keyed under (`two_factor.py` just uses whatever string it's given) — is ALWAYS
+this lowercased+stripped form, regardless of the case actually stored in `auth_config.yaml`
+(which was `'[redacted-dashboard-username]'`, mixed case). `_auth.py`'s `verify_password()` was doing an exact-case
+dict lookup, so a mobile login typed as `[redacted-dashboard-username]` (matching the config file's real case)
+passed the password check against that exact entry, then failed the 2FA check because it went
+looking for a `[redacted-dashboard-username]` enrollment that was actually stored under `blindbandit`.
+**Fix**: new `_normalize_username()` in `_auth.py`, doing the EXACT same `.lower().strip()` as
+streamlit_authenticator, applied consistently — `_load_credentials()` now normalizes its dict
+keys so lookups succeed regardless of the case originally registered in `auth_config.yaml`,
+`verify_login()` normalizes before any check (password, 2FA enrollment, or TOTP code), and
+`create_session()` stores the normalized form so later `/kill`/`/rearm` re-checks stay
+consistent too. **Verified**: re-derived the real bug scenario directly against the actual
+`auth_config.yaml` and the actual live 2FA enrollment (confirmed `_load_credentials()` now
+returns `{'blindbandit': ...}` not `{'[redacted-dashboard-username]': ...}`; confirmed `is_enrolled()` resolves
+correctly for `'[redacted-dashboard-username]'`, `'blindbandit'`, and `'  [redacted-dashboard-username]  '` all alike; replayed the
+exact reported failure — logging in with `'[redacted-dashboard-username]'` typed exactly as stored in the config —
+and confirmed it now correctly reaches the TOTP check instead of falsely reporting
+not-enrolled). Backend restarted with the fix (watchdog relaunch, confirmed healthy). Worth
+trying the real mobile login again now — should get past the 2FA gate regardless of which case
+you type the username in.
+
 === SUPERSEDED — original design notes, kept for the reasoning trail ===
 Started as "should we add a remote emergency stop button" — the mobile backend is currently
 strictly read-only (never touches control.json/roster.json, never places an order), so this
