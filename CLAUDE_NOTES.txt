@@ -537,6 +537,30 @@ implementation paths before laying this out:
    confirm the bubble actually floats after marking Priority, and that the content renders
    correctly, before considering this fully done.
 
+   **SHELVED 2026-08-08 — real-device testing hit a second, deeper platform issue than the
+   spike found; user's own call to stop here rather than keep digging.** On the real phone
+   (Z Flip 6, Samsung One UI), "Show floating bubble" posted a normal notification (confirmed
+   visible in the shade) but Settings > Notifications > Conversations showed **"No
+   conversations"** — Samsung isn't recognizing the notification as a conversation at all, which
+   is a step further back than the emulator finding (there, it WAS recognized as a conversation,
+   just filed as non-priority). Same code, different real result — a genuine OEM-skin
+   discrepancy, not something guessable from AOSP docs alone. Ruled out along the way: the
+   system-level "Floating notifications" toggle is already set to Bubbles (not the blocker); an
+   unrelated Samsung toggle, "Manage notification categories for each app", was found OFF and
+   explains why the per-app Settings page showed no channel list, but doesn't affect
+   conversation recognition. Also fixed a real, separate bug hit during this troubleshooting:
+   `settings_screen.dart`'s bubble button called `invokeMethod` without awaiting or catching
+   it, so any native exception would have shown nothing at all — now awaited with a SnackBar on
+   both success and failure (this fix is real and worth keeping regardless of the bubble
+   feature's fate). No ADB access to the real device from this PC (checked - `adb devices`
+   returns empty, only reachable via wireless debugging, which needs the user to enable it on
+   the phone) - true root-causing would need that, `dumpsys notification`/`dumpsys shortcut`
+   output, or a Samsung-specific doc dive, none of which happened. Left exactly as-is: real
+   bubble content UI built and committed, Settings button present and working (posts a real
+   notification), just doesn't float on this specific device yet. Come back to this with
+   wireless ADB access if picked up again — that's the fastest path to an actual answer instead
+   of more screenshot-guessing.
+
 === KNOWN LIMITATIONS / NOT YET BUILT ===
 - Global-only refresh cadence (120s) and combo source (roster + extra_targets) — no per-combo
   customization in the app itself, matches the "just mirror what the bot trades" v1 design.
