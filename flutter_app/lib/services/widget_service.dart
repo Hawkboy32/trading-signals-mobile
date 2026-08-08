@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:home_widget/home_widget.dart';
 
 import 'api_client.dart';
+import 'position_notifier.dart';
 import '../models/signal.dart';
 
 /// Bridges the app's own signal data to the Android home-screen widget.
@@ -47,5 +48,14 @@ Future<SignalsResponse?> refreshWidget() async {
       qualifiedAndroidName: widgetProviderQualifiedName,
     );
   }
+
+  // Piggybacks on the exact same refresh cadence as the widget update above
+  // (60s foreground, ~15min background) - see position_notifier.dart's own
+  // doc comment for why this is safe to call unconditionally (no-ops if not
+  // logged in). AWAITED, not fire-and-forget - the WorkManager background
+  // isolate calling this can be torn down once its own returned Future
+  // resolves, so an un-awaited call here could get cut off mid-flight.
+  await checkPositionsAndNotify();
+
   return data;
 }

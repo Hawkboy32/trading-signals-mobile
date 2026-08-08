@@ -25,6 +25,7 @@ from backtester.auto_trader_state import load_control, save_control, trigger_kil
 from backtester.data import PolygonClient
 from backtester.live_trades import list_recent_trades
 from backtester.roster import load_roster
+from positions_service import fetch_all_positions
 from signal_service import compute_current_signal
 
 ROSTER_STATUSES = ("active", "paused")
@@ -216,3 +217,14 @@ def rearm(req: ActionRequest, username: str = Depends(_require_session)) -> dict
     control.killed = False
     save_control(control)
     return {"ok": True, "control": {"enabled": True, "killed": False}}
+
+
+@app.get("/positions")
+def positions(username: str = Depends(_require_session)) -> dict:
+    """Live open positions + unrealized P&L, per linked account - the first
+    endpoint that touches real broker credentials (see positions_service.py's
+    own docstring for the full reasoning). Login-gated like /kill and /rearm,
+    but no password re-confirmation needed each request - it's a read, not an
+    action, so the friction only needs to match "are you logged in", not
+    "do you specifically mean this one tap"."""
+    return {"accounts": fetch_all_positions()}

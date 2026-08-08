@@ -302,10 +302,40 @@ notification one below got fully designed out in this conversation:
 1. **Trade history / P&L screen** — the app currently only shows "what would happen right now"
    (live signal state), nothing about actual executed trades. `live_trades.db` (backtester repo)
    already has real entry/exit/P&L per trade; a "Recent Trades" screen would surface it.
-2. **Open positions + live unrealized P&L** — a real architectural decision, not a small add:
-   the mobile backend is deliberately read-only with ZERO broker-credential access today (see
-   signal_service.py's own docstring) — this would mean deciding to give it real broker read
-   access for the first time. Also what the local-notification design below hooks into.
+2. **DONE 2026-08-08 — open positions + live unrealized P&L, plus local notifications on new
+   opens (item #5 below).** User's own explicit go-ahead to cross the boundary flagged here —
+   this IS the first time the mobile backend gets real broker-credential access.
+   **What actually changed, precisely**: this backend already runs on the SAME machine as the
+   dashboard, under the SAME OS user account — `accounts.build_broker_accounts()` already had
+   access to the same OS keyring the dashboard uses, confirmed live (all 5 real linked accounts —
+   MyAlpaca, CBAPI, KRKAPI, IBKR Paper, MyIGPaper — returned real equity/cash/positions on the
+   first real call, no new credential storage added anywhere). The real change is that this data
+   becomes reachable over the phone/Tailscale, not that new secrets exist. Because of that, the
+   new `/positions` endpoint requires login (same session token as `/kill`/`/rearm`, no password
+   re-confirm needed since it's a read not an action) — real balances/holdings are meaningfully
+   more sensitive than the hypothetical "what would the strategy do" signals every other endpoint
+   serves, so it doesn't get the same zero-auth treatment `/signals`/`/health` have.
+   Files: `backend/positions_service.py` (new — per-account fetch with per-account error
+   isolation, matching app.py's own `_friendly_account_error` reasoning; 30s in-process cache,
+   deliberately short since these are real broker API calls, not local file reads, and shouldn't
+   be hammered on every phone poll), `backend/signal_api.py` (`/positions`, login-gated),
+   `flutter_app/lib/models/position.dart` (new), `flutter_app/lib/services/auth_client.dart`
+   (`fetchPositions()`), `flutter_app/lib/screens/positions_screen.dart` (new — per-account cards,
+   colour-coded P&L rows, prompts login automatically on first visit if not already logged in),
+   new wallet icon on the main screen's AppBar.
+   **Verified**: `positions_service.py` called directly against the real linked accounts (read-
+   only `get_positions()`/`get_account_snapshot()` calls, safe) — all 5 returned correctly, zero
+   errors, all flat (matches the bot's own known state); `/positions`' auth gating (401 without a
+   session, 200 with one) and the cache TTL behavior (no refetch within 30s, refetches after)
+   both verified via FastAPI TestClient with the real fetch function mocked. On the real emulator:
+   debug APK built and installed, tapping the new wallet icon correctly triggers the login prompt
+   when not logged in, cancelling shows a graceful "Login required to view positions" message with
+   a retry button (no crash), and the app stayed stable through multiple 60s refresh cycles with
+   the new position-check code running silently in the background. Could NOT verify the actual
+   authenticated positions display or a real "position opened" notification firing — needs a real
+   login, which this assistant doesn't have and shouldn't be doing. Worth clicking through
+   personally: log in on the Open Positions screen once, and if a real position opens while the
+   app has been logged in before, confirm the local notification actually fires.
 3. **Roster health at a glance** — status (active/paused), win rate, trade count vs. the
    demotion thresholds (`min_live_trades`, `losing_streak_threshold`, etc. — see backtester's
    `roster.py`), so "why is this paused / is it learning yet" is visible without asking.
@@ -323,7 +353,31 @@ notification one below got fully designed out in this conversation:
    label within 6% of the range from either edge in `getTitlesWidget`. Verified on the real
    emulator: single-line (VWAP) and three-line (Bollinger Upper/Lower/Mid) cases both render
    correctly post-fix, tap-in and back-navigation both work.
-5. **Mobile local notifications tied to open positions — the one actually designed out below.**
+5. **DONE 2026-08-08 — mobile local notifications tied to open positions, built as designed
+   below.** New `flutter_app/lib/services/position_notifier.dart`: `checkPositionsAndNotify()`
+   calls the new `AuthClient.fetchPositions()`, diffs the current set of
+   `"nickname:ticker"` position keys against the last-known set (persisted via
+   `SharedPreferences`), and fires a local notification (via `flutter_local_notifications`, new
+   dependency) for anything newly present. Wired into `widget_service.dart`'s `refreshWidget()` —
+   AWAITED, not fire-and-forget, since the WorkManager background isolate calling it can be torn
+   down as soon as its own returned Future resolves, so an un-awaited call risked getting cut off
+   mid-flight. Silently no-ops if not logged in (matches the design below — an optional layer on
+   top of item #2, not a core function; a logged-out user just doesn't get these). Real edge case
+   handled: the very first check ever (nothing persisted yet) does NOT fire one notification per
+   already-open position — only genuinely NEW opens after the first successful check count.
+   **Real build issues hit and fixed** (both are actual `flutter_local_notifications` v22.3.0
+   API/build requirements, not guesses): (1) `initialize()`/`show()` now take all-named
+   parameters, not positional — the version resolved here is a major-version jump from what's
+   commonly documented online, worth knowing if searching for examples; (2) the plugin requires
+   Android core library desugaring enabled (`isCoreLibraryDesugaringEnabled = true` +
+   `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")` in `build.gradle.kts`),
+   found via the real Gradle failure, not anticipated in advance.
+   **Verified**: debug APK builds clean with both fixes; on the real emulator, the app ran through
+   several 60s refresh cycles with the new notification-check code active in the background (not
+   logged in, so it's exercising the silent-no-op path) with zero crashes/exceptions in logcat.
+   Could NOT verify an actual notification firing for a real new position — needs to be logged in
+   when a real position opens, which needs the real password. Worth trying personally once logged
+   in on the app: watch for the next real trade to open and confirm the notification appears.
 
 **Local notifications — full design (2026-08-06):** Started as "build our own notification
 system, migrate away from ntfy." Considered Firebase Cloud Messaging (FCM) as the "real push"
