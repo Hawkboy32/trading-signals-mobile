@@ -1,5 +1,6 @@
 package com.blindbandit.tradingsignals.trading_signals.widget
 
+import android.content.SharedPreferences
 import org.json.JSONArray
 
 /** Shared between the Glance widget (SignalsWidget.kt) and the bubble content
@@ -33,6 +34,21 @@ object SignalsData {
         "buy" -> 0xFF4CAF50.toInt()
         "sell" -> 0xFFF44336.toInt()
         else -> 0xFF9E9E9E.toInt()
+    }
+
+    /** home_widget's own plugin (HomeWidgetPlugin.kt) stores a Dart `double`
+     * as a raw bit-encoded Long (`Double.doubleToRawLongBits`), NOT as a
+     * Float - reading a double-backed key with getFloat() throws a
+     * ClassCastException that crashes the widget's whole render pass (the
+     * real cause of "can't show content" found 2026-08-09). Every value
+     * widget_service.dart saves with HomeWidget.saveWidgetData<double> (only
+     * open_positions_pnl today) MUST be read through this, not getFloat(). */
+    fun readDouble(prefs: SharedPreferences, key: String): Double {
+        return try {
+            java.lang.Double.longBitsToDouble(prefs.getLong(key, 0L))
+        } catch (_: Exception) {
+            0.0
+        }
     }
 
     /** Best-effort "Updated Xm ago" from an ISO-8601 timestamp - a parse
