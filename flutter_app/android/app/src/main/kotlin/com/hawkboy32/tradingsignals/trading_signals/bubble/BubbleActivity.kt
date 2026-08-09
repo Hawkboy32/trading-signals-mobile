@@ -48,13 +48,13 @@ class BubbleActivity : Activity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24.toPx(), 20.toPx(), 24.toPx(), 20.toPx())
-            setBackgroundColor(Color.parseColor("#1C1B1F"))
+            setBackgroundColor(Color.parseColor("#0B0E14")) // matches the widget/dashboard/app theme
         }
 
         val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         titleRow.addView(TextView(this).apply {
             text = "Trading Signals"
-            setTextColor(Color.WHITE)
+            setTextColor(Color.parseColor("#3DC7F0"))
             textSize = 16f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
@@ -122,7 +122,7 @@ class BubbleActivity : Activity() {
         })
 
         val scroll = ScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#1C1B1F"))
+            setBackgroundColor(Color.parseColor("#0B0E14")) // matches the widget/dashboard/app theme
             addView(content)
         }
         setContentView(scroll)

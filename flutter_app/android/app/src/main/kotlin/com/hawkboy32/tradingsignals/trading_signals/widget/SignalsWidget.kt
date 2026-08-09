@@ -91,14 +91,17 @@ class SignalsWidget : GlanceAppWidget() {
         Column(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .background(Color(0xFF1C1B1F))
+                // Same near-black-blue backdrop as the dashboard/app theme
+                // (hologram-blue accent on dark) - kept in sync deliberately,
+                // see main.dart's own comment on this same palette.
+                .background(Color(0xFF0B0E14))
                 .padding(12.dp)
                 .clickable(actionStartActivity(Intent(context, MainActivity::class.java))),
         ) {
             Row(modifier = GlanceModifier.fillMaxWidth()) {
                 Text(
                     text = "Datapad",
-                    style = TextStyle(color = solidColor(Color.White), fontWeight = FontWeight.Bold, fontSize = 14.sp),
+                    style = TextStyle(color = solidColor(Color(0xFF3DC7F0)), fontWeight = FontWeight.Bold, fontSize = 14.sp),
                 )
                 if (botKilled) {
                     Text(
