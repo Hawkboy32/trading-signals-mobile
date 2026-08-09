@@ -115,28 +115,48 @@ def signals() -> dict:
         }
 
 
+def _roster_entry_dict(e) -> dict:
+    return {
+        "ticker": e.ticker,
+        "strategy_name": e.strategy_name,
+        "status": e.status,
+        "pause_reason": e.pause_reason,
+        "live_stats": e.live_stats,
+        "promoted_at": e.promoted_at,
+        "paused_at": e.paused_at,
+        "backtest_score": e.backtest_score,
+    }
+
+
 @app.get("/roster")
 def roster() -> dict:
     """Roster health: each active/paused combo's live win rate, trade count,
-    and pause reason, plus the demotion thresholds they're judged against
+    pause reason, promoted/paused timestamps, and the backtest score it was
+    selected on, plus the demotion thresholds they're judged against
     (roster.py's RosterConfig - min_live_trades, losing_streak_threshold,
     etc.) so the app can show "why is this paused / how close to being
-    judged" instead of a bare status label. Read-only, reads fresh on every
-    request - a local file read, not a Polygon call, so this doesn't need
-    the cached refresh loop /signals has."""
+    judged" instead of a bare status label.
+
+    Also returns the top candidates (not yet promoted) ranked by
+    backtest_score, capped at 10 - the full candidate pool can run to dozens
+    of entries, which isn't "what's coming next" so much as noise; the config
+    dict's num_candidates carries the true total so the app can show "top 10
+    of N" honestly rather than implying the list is exhaustive.
+
+    Read-only, reads fresh on every request - a local file read, not a
+    Polygon call, so this doesn't need the cached refresh loop /signals has.
+    """
     state = load_roster()
-    entries = [
-        {
-            "ticker": e.ticker,
-            "strategy_name": e.strategy_name,
-            "status": e.status,
-            "pause_reason": e.pause_reason,
-            "live_stats": e.live_stats,
-        }
-        for e in state.entries
-        if e.status in ROSTER_STATUSES
-    ]
-    return {"entries": entries, "config": asdict(state.config)}
+    entries = [_roster_entry_dict(e) for e in state.entries if e.status in ROSTER_STATUSES]
+    all_candidates = [e for e in state.entries if e.status == "candidate"]
+    top_candidates = sorted(all_candidates, key=lambda e: e.backtest_score, reverse=True)[:10]
+    config = asdict(state.config)
+    config["num_candidates"] = len(all_candidates)
+    return {
+        "entries": entries,
+        "candidates": [_roster_entry_dict(e) for e in top_candidates],
+        "config": config,
+    }
 
 
 @app.get("/trades")

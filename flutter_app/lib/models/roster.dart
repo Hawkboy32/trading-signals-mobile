@@ -30,9 +30,12 @@ class RosterLiveStats {
 class RosterEntry {
   final String ticker;
   final String strategyName;
-  final String status; // "active" | "paused"
+  final String status; // "active" | "paused" | "candidate"
   final String? pauseReason;
   final RosterLiveStats? liveStats;
+  final DateTime? promotedAt;
+  final DateTime? pausedAt;
+  final double backtestScore;
 
   RosterEntry({
     required this.ticker,
@@ -40,6 +43,9 @@ class RosterEntry {
     required this.status,
     required this.pauseReason,
     required this.liveStats,
+    required this.promotedAt,
+    required this.pausedAt,
+    required this.backtestScore,
   });
 
   factory RosterEntry.fromJson(Map<String, dynamic> json) {
@@ -51,6 +57,9 @@ class RosterEntry {
       liveStats: json['live_stats'] != null
           ? RosterLiveStats.fromJson(json['live_stats'] as Map<String, dynamic>)
           : null,
+      promotedAt: json['promoted_at'] != null ? DateTime.tryParse(json['promoted_at'] as String) : null,
+      pausedAt: json['paused_at'] != null ? DateTime.tryParse(json['paused_at'] as String) : null,
+      backtestScore: (json['backtest_score'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -61,6 +70,8 @@ class RosterConfig {
   final double winRateFloor;
   final double cumPnlFloor;
   final double maxPnlDrawdownFloor;
+  final int rosterSize;
+  final int numCandidates; // TOTAL candidate pool size - the `candidates` list below is capped
 
   RosterConfig({
     required this.minLiveTrades,
@@ -68,6 +79,8 @@ class RosterConfig {
     required this.winRateFloor,
     required this.cumPnlFloor,
     required this.maxPnlDrawdownFloor,
+    required this.rosterSize,
+    required this.numCandidates,
   });
 
   factory RosterConfig.fromJson(Map<String, dynamic> json) {
@@ -77,19 +90,25 @@ class RosterConfig {
       winRateFloor: (json['win_rate_floor'] as num?)?.toDouble() ?? 0.30,
       cumPnlFloor: (json['cum_pnl_floor'] as num?)?.toDouble() ?? 0.0,
       maxPnlDrawdownFloor: (json['max_pnl_drawdown_floor'] as num?)?.toDouble() ?? 500.0,
+      rosterSize: (json['roster_size'] as num?)?.toInt() ?? 5,
+      numCandidates: (json['num_candidates'] as num?)?.toInt() ?? 0,
     );
   }
 }
 
 class RosterResponse {
   final List<RosterEntry> entries;
+  final List<RosterEntry> candidates;
   final RosterConfig config;
 
-  RosterResponse({required this.entries, required this.config});
+  RosterResponse({required this.entries, required this.candidates, required this.config});
 
   factory RosterResponse.fromJson(Map<String, dynamic> json) {
     return RosterResponse(
       entries: (json['entries'] as List<dynamic>? ?? [])
+          .map((e) => RosterEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      candidates: (json['candidates'] as List<dynamic>? ?? [])
           .map((e) => RosterEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
       config: RosterConfig.fromJson(json['config'] as Map<String, dynamic>? ?? {}),
