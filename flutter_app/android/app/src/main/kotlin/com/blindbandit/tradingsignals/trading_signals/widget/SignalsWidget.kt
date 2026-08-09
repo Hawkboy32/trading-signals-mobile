@@ -97,7 +97,7 @@ class SignalsWidget : GlanceAppWidget() {
         ) {
             Row(modifier = GlanceModifier.fillMaxWidth()) {
                 Text(
-                    text = "Trading Signals",
+                    text = "Datapad",
                     style = TextStyle(color = solidColor(Color.White), fontWeight = FontWeight.Bold, fontSize = 14.sp),
                 )
                 if (botKilled) {
