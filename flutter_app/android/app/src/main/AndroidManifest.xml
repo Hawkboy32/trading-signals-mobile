@@ -56,7 +56,8 @@
              meta-data entry below (Samsung's Flex Window spec) - same
              receiver, same widget, no separate registration needed. -->
         <receiver android:name=".widget.SignalsWidgetReceiver"
-                  android:exported="true">
+                  android:exported="true"
+                  android:label="Datapad">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
             </intent-filter>

@@ -463,6 +463,16 @@ notification one below got fully designed out in this conversation:
    Verified: clean `flutter build apk --debug` (both this and the padding fix together). Not yet
    confirmed on the real device that dragging the widget frame down actually reaches the SMALL/
    MEDIUM breakpoints on this launcher specifically — do that before calling it done.
+
+   **Renamed to "Datapad" 2026-08-09, purely for fun (user's own Star Wars-themed ask, no other
+   reason).** The backtester dashboard got the same treatment ("Holotable" — see backtester's own
+   CLAUDE_NOTES.txt), so this is the widget's half. Changed in three places: the widget's own
+   on-screen title text (`SignalsWidget.kt`, was "Trading Signals"), the widget PICKER entry name
+   (`android:label="Datapad"` added to the `SignalsWidgetReceiver` `<receiver>` tag in
+   AndroidManifest.xml — previously unset, so it fell back to the app's own display name), and
+   the brief loading-state placeholder text (`signals_widget_loading.xml`). The app itself, the
+   bubble, and the widget-picker's app grouping still say "Trading Signals" — deliberately scoped
+   to just the widget, matching exactly what was asked, not a whole-app rebrand.
 4. **DONE 2026-08-08 — bigger chart on tap.** Same `recentCloses` data (still 30 points, no new
    backend field) but tapping a card now opens `signal_detail_screen.dart` — a full-screen
    `fl_chart` LineChart (new dependency) with real axis labels and the strategy's own reference
