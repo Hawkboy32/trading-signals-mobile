@@ -473,6 +473,32 @@ notification one below got fully designed out in this conversation:
    the brief loading-state placeholder text (`signals_widget_loading.xml`). The app itself, the
    bubble, and the widget-picker's app grouping still say "Trading Signals" — deliberately scoped
    to just the widget, matching exactly what was asked, not a whole-app rebrand.
+
+   **Full colour rebrand 2026-08-09 — same day, user's follow-up ask ("full rebrand... starwars-
+   ish colour scheme").** This time genuinely whole-app, not scoped to just the widget — user
+   supplied their own icon images separately, this covers only colour. Direction matches the
+   dashboard's own "Holotable" theme exactly (see backtester's CLAUDE_NOTES.txt for the fuller
+   reasoning): hologram cyan-blue `#3dc7f0` + warm gold `#e0a94a` on a near-black blue-tinted
+   backdrop `#0b0e14`, the SAME two hex values reused across every surface on purpose.
+   `main.dart`: `MaterialApp`'s `theme`/`darkTheme` now build `ColorScheme.fromSeed(seedColor:
+   hologramBlue, secondaryKeyColor: warmGold)` instead of a plain `Colors.indigo` seed — kept
+   BOTH light and dark variants (rather than forcing dark-only) since the app already supported
+   both and removing that felt like taking away a working option nobody asked to lose;
+   `themeMode` was never set explicitly so it already followed the system setting and still does.
+   Confirmed no screen hardcodes a background color that would fight the new theme (grepped for
+   `Scaffold(backgroundColor:`/`Colors.white` — none found), so this should propagate cleanly
+   without per-screen edits — worth an actual look on the real device to confirm, not just trust
+   the grep.
+   `SignalsWidget.kt`/`BubbleActivity.kt`: background changed from a generic near-black
+   (`#1C1B1F`) to the same `#0B0E14` as everywhere else, and the "Datapad"/"Trading Signals"
+   title text recoloured from plain white to the hologram blue. Left the buy/sell green/red and
+   the STOPPED red **unchanged** — those are semantic status colours (universally understood,
+   load-bearing for at-a-glance reading), not brand chrome, and reskinning them wasn't asked for
+   or a good idea.
+   **Verified**: `flutter build apk --debug` clean. Could not visually confirm on the real device
+   in this session (no emulator running, and no way to screenshot the compiled APK without one) —
+   do that before calling this fully done, same "compiling isn't verifying" lesson the P&L widget
+   crash already taught once this session.
 4. **DONE 2026-08-08 — bigger chart on tap.** Same `recentCloses` data (still 30 points, no new
    backend field) but tapping a card now opens `signal_detail_screen.dart` — a full-screen
    `fl_chart` LineChart (new dependency) with real axis labels and the strategy's own reference

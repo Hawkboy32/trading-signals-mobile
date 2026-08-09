@@ -38,15 +38,26 @@ class TradingSignalsApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // "Holotable"/"Datapad" theme: hologram blue + a warm gold secondary,
+    // for no reason other than the user wanted a Star Wars-ish palette to
+    // match the rename. Same seed hues as the widget's own colors
+    // (SignalsWidget.kt) and the backtester dashboard's .streamlit/config.toml,
+    // kept in sync across all three surfaces deliberately.
+    const hologramBlue = Color(0xFF3DC7F0);
+    const warmGold = Color(0xFFE0A94A);
     return MaterialApp(
       title: 'Trading Signals',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: hologramBlue,
+          secondaryKeyColor: warmGold,
+        ),
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
+          seedColor: hologramBlue,
+          secondaryKeyColor: warmGold,
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
