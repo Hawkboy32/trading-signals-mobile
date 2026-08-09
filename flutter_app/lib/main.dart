@@ -50,14 +50,14 @@ class TradingSignalsApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: hologramBlue,
-          secondaryKeyColor: warmGold,
+          secondary: warmGold,
         ),
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: hologramBlue,
-          secondaryKeyColor: warmGold,
+          secondary: warmGold,
           brightness: Brightness.dark,
         ),
         useMaterial3: true,

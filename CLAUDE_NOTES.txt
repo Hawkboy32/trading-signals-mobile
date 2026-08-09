@@ -761,6 +761,51 @@ actually change the live account's sizing) or click through the actual screen on
 this session — do both before fully trusting this, same "compiling isn't verifying" gap that
 let the P&L widget crash through earlier this week.
 
+=== CRITICAL: RELEASE BUILDS WERE SILENTLY FAILING FOR MULTIPLE INSTALLS (2026-08-09) ===
+User reported a newly-installed APK showing an old version — even after a FULL uninstall,
+deleting other APKs, and a clean reinstall. That ruled out client-side caching entirely and
+pointed at the build itself. Root-caused to two compounding real bugs, both worth understanding
+so they don't recur:
+
+**Bug 1 — every `flutter build apk --release` command this session was run as
+`flutter build apk --release 2>&1 | tail -N`.** In a bash pipeline, `$?` (and the exit code a
+background task's own completion notification reports) is the LAST command's exit code — `tail`,
+which reads and prints whatever it's given and always exits 0, regardless of whether `flutter
+build` itself failed. Every single "build succeeded" claim made via this pattern was unverified;
+the harness's own "completed (exit code 0)" notifications were reporting `tail`'s exit code, not
+the real one. Fix going forward: never pipe a build command through `tail`/`head`/etc. for exit
+code purposes — redirect to a file (`command > log.txt 2>&1; echo "EXIT=$?"`) and tail the file
+separately if a preview is wanted, so the captured exit code is the real one.
+
+**Bug 2 — the "Full colour rebrand" commit's `main.dart` had a genuine compile error.**
+`ColorScheme.fromSeed(seedColor: ..., secondaryKeyColor: warmGold)` — `secondaryKeyColor` isn't a
+real parameter on this Flutter SDK's `ColorScheme.fromSeed` (confirmed by reading
+`C:\src\flutter\packages\flutter\lib\src\material\color_scheme.dart` directly — the real
+parameter for overriding the secondary color is plain `secondary: Color?`). This should have
+failed loudly the moment it was written, but bug 1 masked it completely — every build from that
+commit onward silently produced a stale APK (Gradle/Flutter's incremental build left the
+previous successful output in place rather than failing visibly through the piped command),
+meaning several builds AFTER that point that were reported as "done, ready to install" were
+never actually rebuilt with their intended changes. Full extent unknown — at minimum the "Full
+colour rebrand" build itself was affected; whether Bot Control's FIRST build attempt was also
+silently stale or is a fresh instance of the same bug is unclear (its own build attempt also
+failed with this same error, now fixed).
+
+**Fixed**: `secondaryKeyColor` → `secondary` in `main.dart` (both light and dark theme blocks).
+**Verified properly this time** — real exit code captured via file redirection, not a pipe
+(`REAL_BUILD_EXIT=0`, genuinely), AND the actual compiled binary inspected directly rather than
+trusting the build tool's own claim: unzipped the APK, confirmed `"Bot Control"` is present in
+`lib/arm64-v8a/libapp.so` (the compiled Dart AOT code) and `"Datapad"` is present in
+`classes.dex` (compiled Kotlin) — both genuinely absent from the previous, stale APK when
+checked the same way. This is the level of verification that should have happened before EVERY
+"ready to install" claim tonight, not just this one.
+
+Separately: the local `python -m http.server` used to serve APKs for install was left running
+continuously across multiple rebuild cycles, and held a file lock that made `flutter clean` fail
+outright ("a program may still be using a file in the directory") — likely a contributing factor
+to builds not fully overwriting old output. Going forward: stop any download server BEFORE
+starting a new build, not just before/after serving.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
 Claude's own auto-memory system (separate from this file) has the fuller session-by-session
 history of how this got built. This .txt is the lightweight, quick-orientation summary — see
