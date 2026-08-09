@@ -728,6 +728,39 @@ install available in the session that made this change; syntax was hand-reviewed
 side was `ast.parse`-checked, but this needs an actual `flutter run` + live backend pass before
 trusting it fully.
 
+=== BOT CONTROL SCREEN: RISK PRESET SWITCH (2026-08-09) ===
+User's own explicit scope: mobile controls "more than just start/stop," but NOT backtest
+controls and NOT account/API stuff. Risk preset switch (Conservative/Moderate/Aggressive) was
+the clear fit — self-contained, already real on the dashboard, directly useful from a phone.
+
+New `lib/screens/bot_control_screen.dart`, reached via a new "tune" icon in the main AppBar
+(alongside the existing power/wallet/history/insights/settings icons). Same login-required +
+password-confirmed pattern as stop/re-arm — switching presets changes real position sizing from
+the next trade onward, so it gets the same friction, not a lighter check just because it isn't a
+full stop. Extracted the password-confirm dialog (previously private to
+`signal_list_screen.dart`) into `lib/widgets/password_confirm_dialog.dart` so both screens share
+the exact same dialog rather than two slightly-different copies.
+
+Preset values shown in the UI (sizing %, vol target, max drawdown, giveback) come from a new
+`GET /risk-presets` on the backend, not hardcoded in Dart — same "don't let two surfaces define
+the same thing differently" reasoning as everything else this session. Backend changes (see
+backtester's own CLAUDE_NOTES.txt for the shared `risk_presets.py` module this all sits on):
+`GET /risk-presets` (unauthenticated, real live values), `POST /risk-preset` (login-gated +
+password-confirmed, mirrors `/kill`/`/rearm`'s shape exactly), `/health` now also returns
+`risk_preset` so the app can show which preset (if any) is currently active.
+
+New `lib/models/risk_preset.dart` (mirrors the backend's per-preset shape),
+`ApiClient.fetchRiskPresets()`, `AuthClient.setRiskPreset(preset, password)`,
+`fetchControlState()` widened from `Map<String, bool>?` to `Map<String, dynamic>?` to carry the
+new string field alongside the existing booleans.
+**Verified**: `flutter analyze` clean on every new/changed file, `flutter build apk --debug`
+clean. Hit the real running backend directly — `/risk-presets` returns the actual live preset
+values, `/health` correctly returns `risk_preset: null` (accurate — nothing's been applied
+through this mechanism yet). Did NOT exercise the real `POST /risk-preset` end to end (would
+actually change the live account's sizing) or click through the actual screen on a device in
+this session — do both before fully trusting this, same "compiling isn't verifying" gap that
+let the P&L widget crash through earlier this week.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
 Claude's own auto-memory system (separate from this file) has the fuller session-by-session
 history of how this got built. This .txt is the lightweight, quick-orientation summary — see

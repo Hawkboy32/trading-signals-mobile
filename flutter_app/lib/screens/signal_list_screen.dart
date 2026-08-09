@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../models/signal.dart';
 import '../services/auth_client.dart';
 import '../services/widget_service.dart';
+import '../widgets/password_confirm_dialog.dart';
+import 'bot_control_screen.dart';
 import 'login_screen.dart';
 import 'positions_screen.dart';
 import 'roster_health_screen.dart';
@@ -25,7 +27,7 @@ class _SignalListScreenState extends State<SignalListScreen> {
   String? _error;
   bool _loading = true;
   Timer? _timer;
-  Map<String, bool>? _controlState;
+  Map<String, dynamic>? _controlState;
   bool _controlActionInFlight = false;
 
   @override
@@ -92,7 +94,8 @@ class _SignalListScreenState extends State<SignalListScreen> {
     if (!mounted) return;
 
     final armed = _isArmed;
-    final password = await _showPasswordConfirmDialog(
+    final password = await showPasswordConfirmDialog(
+      context: context,
       title: armed ? 'Stop trading?' : 'Re-arm trading?',
       message: armed
           ? 'This immediately stops the bot from opening or managing any new trades. '
@@ -128,51 +131,6 @@ class _SignalListScreenState extends State<SignalListScreen> {
     }
   }
 
-  Future<String?> _showPasswordConfirmDialog({
-    required String title,
-    required String message,
-    required String confirmLabel,
-    required bool isDestructive,
-  }) async {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              obscureText: true,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Password',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (v) => Navigator.of(context).pop(v),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: isDestructive
-                ? FilledButton.styleFrom(backgroundColor: Colors.red)
-                : null,
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -223,6 +181,16 @@ class _SignalListScreenState extends State<SignalListScreen> {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const RosterHealthScreen()),
               );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Bot control',
+            onPressed: () async {
+              await Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => const BotControlScreen()));
+              _refreshControlState();
             },
           ),
           IconButton(

@@ -1,8 +1,9 @@
 """Read-only signal API for the mobile app - serves the CURRENT buy/sell/hold
 + conviction for whatever the live auto_trader is actually configured to
 trade (the roster's active/paused entries, plus any extra_targets like the
-IG forex combo). Never writes to roster.json/control.json, never places an
-order - purely mirrors "what the bot is thinking" for manual decision-making.
+IG forex combo). Never places an order directly, never touches backtests or
+account/broker credentials - the only writes are the explicit, login-gated,
+password-confirmed live-bot actions below (/kill, /rearm, /risk-preset).
 
 Run: uvicorn signal_api:app --host 0.0.0.0 --port 8600
 """
@@ -24,6 +25,7 @@ from backtester import notifications
 from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.data import PolygonClient
 from backtester.live_trades import list_recent_trades
+from backtester.risk_presets import RISK_PRESETS, apply_risk_preset
 from backtester.roster import load_roster
 from positions_service import fetch_all_positions
 from signal_service import compute_current_signal
@@ -89,6 +91,15 @@ def _start_refresh_loop() -> None:
     threading.Thread(target=_refresh_loop, daemon=True).start()
 
 
+@app.get("/risk-presets")
+def risk_presets() -> dict:
+    """The actual RISK_PRESETS values (sizing/vol-target/drawdown/giveback per
+    preset) - unauthenticated read, same trust level as /health's enabled/
+    killed, so the app can show real current numbers instead of a hardcoded
+    copy that could drift from the dashboard's own definition."""
+    return {"presets": RISK_PRESETS}
+
+
 @app.get("/health")
 def health() -> dict:
     # enabled/killed are exposed unauthenticated - same read-only trust level as
@@ -103,6 +114,7 @@ def health() -> dict:
             "last_error": _cache["last_error"],
             "enabled": control.enabled,
             "killed": control.killed,
+            "risk_preset": control.risk_preset,
         }
 
 
@@ -237,6 +249,27 @@ def rearm(req: ActionRequest, username: str = Depends(_require_session)) -> dict
     control.killed = False
     save_control(control)
     return {"ok": True, "control": {"enabled": True, "killed": False}}
+
+
+class RiskPresetRequest(BaseModel):
+    preset: str
+    password: str
+
+
+@app.post("/risk-preset")
+def risk_preset(req: RiskPresetRequest, username: str = Depends(_require_session)) -> dict:
+    """Switches the live bot's risk dial (Conservative/Moderate/Aggressive) -
+    same backtester.risk_presets.apply_risk_preset the dashboard's own preset
+    buttons call, so the two surfaces can never define the preset differently.
+    Changes real position sizing for the next trade onward, so it gets the
+    same password-confirmation friction as /kill and /rearm, not a lighter
+    check just because it isn't a full stop."""
+    if req.preset not in RISK_PRESETS:
+        raise HTTPException(status_code=400, detail=f"Unknown preset. Choose one of: {', '.join(RISK_PRESETS)}")
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    control = apply_risk_preset(req.preset)
+    return {"ok": True, "risk_preset": control.risk_preset, "sizing_value": control.sizing_value}
 
 
 @app.get("/positions")

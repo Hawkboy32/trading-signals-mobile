@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/risk_preset.dart';
 import '../models/roster.dart';
 import '../models/signal.dart';
 import '../models/trade.dart';
@@ -57,6 +58,19 @@ class ApiClient {
     return (body['trades'] as List<dynamic>? ?? [])
         .map((t) => TradeRecord.fromJson(t as Map<String, dynamic>))
         .toList();
+  }
+
+  static Future<Map<String, RiskPreset>> fetchRiskPresets() async {
+    final base = await getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/risk-presets'))
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) {
+      throw Exception('Backend returned HTTP ${resp.statusCode}');
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final presets = body['presets'] as Map<String, dynamic>? ?? {};
+    return presets.map((name, v) => MapEntry(name, RiskPreset.fromJson(v as Map<String, dynamic>)));
   }
 
   /// Returns true if the backend is reachable, for the settings screen's

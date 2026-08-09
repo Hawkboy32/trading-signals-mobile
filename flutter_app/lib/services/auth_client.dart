@@ -63,9 +63,10 @@ class AuthClient {
     await _saveToken(body['token'] as String);
   }
 
-  /// {enabled, killed} from /health - unauthenticated, just enough to decide
-  /// which of Stop/Start to show.
-  static Future<Map<String, bool>?> fetchControlState() async {
+  /// {enabled, killed, risk_preset} from /health - unauthenticated, just
+  /// enough to decide which of Stop/Start to show and which risk preset (if
+  /// any) is currently highlighted as active.
+  static Future<Map<String, dynamic>?> fetchControlState() async {
     try {
       final base = await ApiClient.getBackendUrl();
       final resp = await http.get(Uri.parse('$base/health')).timeout(const Duration(seconds: 10));
@@ -74,9 +75,41 @@ class AuthClient {
       return {
         'enabled': body['enabled'] as bool? ?? false,
         'killed': body['killed'] as bool? ?? false,
+        'risk_preset': body['risk_preset'] as String?,
       };
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Switches the live bot's risk preset (Conservative/Moderate/Aggressive) -
+  /// same password-confirmation requirement as stopTrading/rearmTrading,
+  /// since this changes real position sizing from the next trade onward.
+  static Future<void> setRiskPreset(String preset, String password) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/risk-preset'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'preset': preset, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
     }
   }
 
