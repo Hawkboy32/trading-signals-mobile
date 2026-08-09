@@ -90,7 +90,9 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
       );
     }
     return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      // Bottom padding well past the default 8dp - the last card was getting
+      // clipped by the system nav bar/gesture area on the real device.
+      padding: EdgeInsets.only(top: 8, bottom: 24 + MediaQuery.of(context).padding.bottom),
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
