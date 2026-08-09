@@ -397,9 +397,47 @@ notification one below got fully designed out in this conversation:
    login, which this assistant doesn't have and shouldn't be doing. Worth clicking through
    personally: log in on the Open Positions screen once, and if a real position opens while the
    app has been logged in before, confirm the local notification actually fires.
-3. **Roster health at a glance** — status (active/paused), win rate, trade count vs. the
-   demotion thresholds (`min_live_trades`, `losing_streak_threshold`, etc. — see backtester's
-   `roster.py`), so "why is this paused / is it learning yet" is visible without asking.
+3. **DONE (undated in this file until now, built alongside the rest of this backlog) — roster
+   health at a glance.** `backend/signal_api.py`'s `/roster` endpoint reads `roster.json` fresh
+   (`roster.py`'s `load_roster()` — a local file read, no Polygon call) and returns each
+   active/paused combo's live stats (trades, win rate, cumulative P&L, losing streak, drawdown)
+   alongside the exact demotion thresholds (`min_live_trades`, `losing_streak_threshold`, etc.)
+   it's judged against. `flutter_app/lib/screens/roster_health_screen.dart` shows "N / min_live
+   trades — not enough sample yet" with a progress bar below that count, or the real stats once
+   judged, plus the pause reason in the bot's own words — answers "why is this paused / is it
+   learning yet" without asking.
+
+   **Extended 2026-08-09 — three more details, user's own follow-up question ("what is roster
+   health looking at, is there more we can add").** Investigated what `RosterEntry`/`RosterConfig`
+   already compute but weren't surfaced, rather than guessing at new fields:
+   - **`promoted_at`/`paused_at`** were already on every entry, just never returned by the
+     endpoint or read by the app — now shown as "Active since Xd ago" / "Paused Xh ago" (same
+     coarse m/h/d granularity as the widget's own relative-time label, kept consistent rather
+     than a second format).
+   - **`backtest_score`** — the ranking score an entry earned when selected — same story, computed
+     and stored, never exposed. Now shown next to the strategy name on every card.
+   - **Roster capacity** — `RosterConfig.roster_size` was already in the JSON `/roster` already
+     returned (`asdict(state.config)` includes every field), just never parsed by the Dart model.
+     Added `rosterSize` to `RosterConfig.fromJson` (no backend change needed for this one) and a
+     header line: "N of `roster_size` active slots filled".
+   - **Candidates were invisible.** The endpoint only ever returned `active`/`paused` entries
+     (`ROSTER_STATUSES = ("active", "paused")`) — the whole pipeline of tickers being tracked and
+     ranked for the next promotion had zero visibility, despite the screen's whole point being
+     "is it learning yet." Real number found while checking this against the live roster.json:
+     **3,226 candidates** — far too many to just dump in a list, so the endpoint now returns only
+     the top 10 by `backtest_score` (`config.num_candidates` carries the true total so the app can
+     honestly say "top 10 of 3,226" rather than implying the list is exhaustive). New compact
+     `_CandidateCard` widget — no live_stats row (a candidate hasn't traded live, or has too
+     little history to mean anything), just ticker/strategy/score.
+   **Verified**: hit the real running `/roster` endpoint after restarting the backend (found and
+   cleaned up a second duplicate watchdog+uvicorn pair while doing this — same "editing a shared
+   module needs a real process restart" lesson as the backtester side, see its own CLAUDE_NOTES —
+   only one process was ever actually bound to port 8600, the paired PIDs are this environment's
+   normal Python-venv launch pattern, not real duplicates). Confirmed against the real roster:
+   3 of 3 active slots filled, real `promoted_at` timestamps, real backtest scores, top 5
+   candidates by score all sane values. `flutter build apk --debug` clean. Not yet re-verified in
+   the actual app UI on the real device — do that before considering this fully done, same gap
+   that let the P&L widget crash through yesterday.
 4. **DONE 2026-08-08 — bigger chart on tap.** Same `recentCloses` data (still 30 points, no new
    backend field) but tapping a card now opens `signal_detail_screen.dart` — a full-screen
    `fl_chart` LineChart (new dependency) with real axis labels and the strategy's own reference

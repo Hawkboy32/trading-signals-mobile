@@ -3,6 +3,17 @@ import 'package:flutter/material.dart';
 import '../models/roster.dart';
 import '../services/api_client.dart';
 
+/// "Active 3d ago" / "Paused 5h ago" - same coarse Xm/Xh/Xd granularity as
+/// the home-screen widget's own relative-time label, kept consistent rather
+/// than inventing a second format.
+String _relativeTime(DateTime when) {
+  final diff = DateTime.now().toUtc().difference(when.toUtc());
+  if (diff.inMinutes < 1) return 'just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  return '${diff.inDays}d ago';
+}
+
 /// Shows each roster combo's live performance against the bot's own
 /// demotion thresholds (roster.py's RosterConfig) - answers "why is this
 /// paused" / "is it learning yet" without asking, matching what got
@@ -66,19 +77,41 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
       );
     }
     final data = _data!;
-    if (data.entries.isEmpty) {
+    final activeCount = data.entries.where((e) => e.status == 'active').length;
+
+    if (data.entries.isEmpty && data.candidates.isEmpty) {
       return ListView(
         children: [
           const SizedBox(height: 80),
           Center(
-            child: Text('No active or paused combos right now.', style: TextStyle(color: Colors.grey[600])),
+            child: Text('No active, paused, or candidate combos right now.', style: TextStyle(color: Colors.grey[600])),
           ),
         ],
       );
     }
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      children: data.entries.map((e) => _RosterCard(entry: e, config: data.config)).toList(),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Text(
+            '$activeCount of ${data.config.rosterSize} active slots filled',
+            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+          ),
+        ),
+        ...data.entries.map((e) => _RosterCard(entry: e, config: data.config)),
+        if (data.candidates.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Text(
+              'Candidates - not yet promoted (top ${data.candidates.length} of ${data.config.numCandidates}, ranked by backtest score)',
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            ),
+          ),
+          ...data.candidates.map((e) => _CandidateCard(entry: e)),
+        ],
+      ],
     );
   }
 }
@@ -113,7 +146,10 @@ class _RosterCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(entry.ticker, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text(entry.strategyName, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                      Text(
+                        '${entry.strategyName} - backtest score ${entry.backtestScore.toStringAsFixed(2)}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
                     ],
                   ),
                 ),
@@ -130,6 +166,10 @@ class _RosterCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (_isPaused && entry.pausedAt != null)
+              Text('Paused ${_relativeTime(entry.pausedAt!)}', style: TextStyle(color: Colors.grey[500], fontSize: 11))
+            else if (!_isPaused && entry.promotedAt != null)
+              Text('Active since ${_relativeTime(entry.promotedAt!)}', style: TextStyle(color: Colors.grey[500], fontSize: 11)),
             if (_isPaused && entry.pauseReason != null) ...[
               const SizedBox(height: 6),
               Text(entry.pauseReason!, style: const TextStyle(color: Colors.orange, fontSize: 12)),
@@ -153,7 +193,7 @@ class _RosterCard extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('${numTrades} trades', style: const TextStyle(fontSize: 13)),
+                  Text('$numTrades trades', style: const TextStyle(fontSize: 13)),
                   if (stats?.winRate != null)
                     Text('${(stats!.winRate! * 100).toStringAsFixed(0)}% win rate', style: const TextStyle(fontSize: 13)),
                   Text(
@@ -174,6 +214,43 @@ class _RosterCard extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact - a candidate hasn't traded live yet (or has too little history
+/// to mean much), so there's no win-rate/P&L row to show, just what it's
+/// waiting to prove itself with: ticker, strategy, and the backtest score
+/// it's ranked on against every other candidate for the next open slot.
+class _CandidateCard extends StatelessWidget {
+  final RosterEntry entry;
+
+  const _CandidateCard({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(entry.ticker, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                  Text(entry.strategyName, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                ],
+              ),
+            ),
+            Text(
+              'score ${entry.backtestScore.toStringAsFixed(2)}',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w600),
+            ),
           ],
         ),
       ),
