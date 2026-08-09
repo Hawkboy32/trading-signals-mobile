@@ -4,12 +4,15 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -42,10 +45,26 @@ private fun solidColor(color: Color) = ColorProvider(day = color, night = color)
  * anything itself (Glance widgets can't make network calls directly).
  * Parsing/formatting is shared with the bubble content screen via
  * SignalsData.kt, since both read the exact same saved keys.
+ *
+ * Resizable (android:resizeMode="horizontal|vertical" in
+ * signals_widget_info.xml already allowed dragging the widget's frame
+ * smaller/larger, but the content itself never responded - always the same
+ * fixed 4 rows regardless of size, until this SizeMode.Responsive addition).
+ * Responsive rather than Exact (which needs API 31+): Glance snaps
+ * LocalSize.current to whichever of SMALL/MEDIUM/LARGE below is closest to
+ * the frame the user actually drags it to, and works on every API level this
+ * app supports, not just the newest.
  */
 class SignalsWidget : GlanceAppWidget() {
 
+    companion object {
+        private val SMALL = DpSize(140.dp, 100.dp)
+        private val MEDIUM = DpSize(250.dp, 180.dp)
+        private val LARGE = DpSize(352.dp, 339.dp)
+    }
+
     override val stateDefinition = HomeWidgetGlanceStateDefinition()
+    override val sizeMode = SizeMode.Responsive(setOf(SMALL, MEDIUM, LARGE))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
@@ -61,6 +80,13 @@ class SignalsWidget : GlanceAppWidget() {
         val positionsAvailable = state.preferences.getBoolean("positions_available", false)
         val openCount = state.preferences.getInt("open_positions_count", 0)
         val openPnl = SignalsData.readDouble(state.preferences, "open_positions_pnl")
+
+        // Glance guarantees LocalSize.current is exactly one of the declared
+        // breakpoints in Responsive mode, so a straight height comparison is
+        // enough to pick a tier - no need to match both dimensions.
+        val size = LocalSize.current
+        val maxRows = if (size.height < MEDIUM.height) 1 else if (size.height < LARGE.height) 3 else 8
+        val showExtras = size.height >= MEDIUM.height
 
         Column(
             modifier = GlanceModifier
@@ -87,7 +113,7 @@ class SignalsWidget : GlanceAppWidget() {
                     style = TextStyle(color = solidColor(Color.LightGray), fontSize = 12.sp),
                 )
             } else {
-                rows.take(4).forEach { row ->
+                rows.take(maxRows).forEach { row ->
                     Row(modifier = GlanceModifier.fillMaxWidth().padding(top = 6.dp)) {
                         Text(
                             text = row.ticker,
@@ -104,7 +130,7 @@ class SignalsWidget : GlanceAppWidget() {
                     }
                 }
             }
-            if (positionsAvailable) {
+            if (showExtras && positionsAvailable) {
                 val pnlSign = if (openPnl >= 0) "+" else ""
                 Text(
                     text = "$openCount open · $pnlSign${"%.2f".format(openPnl)}",
@@ -115,11 +141,13 @@ class SignalsWidget : GlanceAppWidget() {
                     modifier = GlanceModifier.padding(top = 8.dp),
                 )
             }
-            Text(
-                text = SignalsData.relativeTime(lastRefreshed),
-                style = TextStyle(color = solidColor(Color.Gray), fontSize = 10.sp),
-                modifier = GlanceModifier.padding(top = 6.dp),
-            )
+            if (showExtras) {
+                Text(
+                    text = SignalsData.relativeTime(lastRefreshed),
+                    style = TextStyle(color = solidColor(Color.Gray), fontSize = 10.sp),
+                    modifier = GlanceModifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 }
