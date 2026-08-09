@@ -43,7 +43,7 @@ class BubbleActivity : Activity() {
         val botKilled = prefs.getBoolean("bot_killed", false)
         val positionsAvailable = prefs.getBoolean("positions_available", false)
         val openCount = prefs.getInt("open_positions_count", 0)
-        val openPnl = prefs.getFloat("open_positions_pnl", 0f).toDouble()
+        val openPnl = SignalsData.readDouble(prefs, "open_positions_pnl")
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

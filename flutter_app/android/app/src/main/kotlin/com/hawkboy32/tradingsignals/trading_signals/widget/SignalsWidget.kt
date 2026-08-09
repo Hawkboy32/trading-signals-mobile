@@ -60,7 +60,7 @@ class SignalsWidget : GlanceAppWidget() {
         val botKilled = state.preferences.getBoolean("bot_killed", false)
         val positionsAvailable = state.preferences.getBoolean("positions_available", false)
         val openCount = state.preferences.getInt("open_positions_count", 0)
-        val openPnl = state.preferences.getFloat("open_positions_pnl", 0f).toDouble()
+        val openPnl = SignalsData.readDouble(state.preferences, "open_positions_pnl")
 
         Column(
             modifier = GlanceModifier

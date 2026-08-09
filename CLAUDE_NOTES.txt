@@ -113,7 +113,22 @@ both render through the same `SignalsWidget.kt` composable, so one change covers
 Verified by a clean `flutter build apk --debug` (Kotlin + Dart both compile); not yet re-verified
 on the real device — do that before considering this fully done.
 
-=== DONE 2026-08-07 — cover-screen widget for the Z Flip 6 ===
+**BUG FOUND + FIXED 2026-08-09 — real crash from the P&L addition above, "can't show content"
+on the real device.** The "not yet re-verified on the real device" gap above is exactly what let
+this through — a clean compile says nothing about a runtime `ClassCastException`. Root cause,
+confirmed against `home_widget`'s own plugin source (`HomeWidgetPlugin.kt`), not guessed:
+`saveWidgetData<double>` stores a Dart `double` as a raw bit-encoded `Long`
+(`Double.doubleToRawLongBits`), NOT a `Float` — reading `open_positions_pnl` back with
+`getFloat()` (both `SignalsWidget.kt` and `BubbleActivity.kt` did this) throws the moment that
+key is ever set, which crashes the whole widget render pass and shows Android's generic "can't
+show content" fallback. `open_positions_count` (an `<int>`) was unaffected — small values always
+encode as a 32-bit Int over the platform channel, so `getInt()` was already correct there; only
+the `<double>` value had the wrong reader. Fixed with a shared `SignalsData.readDouble()` helper
+(`Double.longBitsToDouble(prefs.getLong(key, 0L))`) used by both files, rather than patching each
+call site separately — the next `<double>` value added here, if any, gets this for free instead
+of risking the same mistake again. Verified via a clean `flutter build apk --debug`; the deeper
+lesson is the one already stated above and evidently not followed strictly enough: a clean
+compile is not verification, and this feature still needs an actual on-device check.
 UPDATE: built and shipped ahead of Saturday (turned out small enough to just do). User confirmed
 on the real Z Flip 6: works perfectly. Verified end to end — Samsung's Flex Window metadata
 (samsung-appwidget-provider + widgetCategory=keyguard + the Flip5's own 352dp/339dp size values,
