@@ -85,7 +85,7 @@ class _TradeHistoryScreenState extends State<TradeHistoryScreen> {
       );
     }
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.fromLTRB(0, 8, 0, 24 + MediaQuery.of(context).padding.bottom),
       itemCount: trades.length,
       itemBuilder: (context, i) => _TradeCard(trade: trades[i], formatTimestamp: _formatTimestamp),
     );

@@ -257,7 +257,7 @@ class _SignalListScreenState extends State<SignalListScreen> {
     ];
 
     return ListView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: EdgeInsets.fromLTRB(8, 8, 8, 24 + MediaQuery.of(context).padding.bottom),
       itemCount: items.length + 1,
       itemBuilder: (context, index) {
         if (index == items.length) {

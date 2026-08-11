@@ -2,22 +2,73 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../models/signal.dart';
+import '../services/auth_client.dart';
 
 /// The bigger, tap-through view of a signal card's sparkline - same
-/// `recentCloses` data (no new backend call, no new fields), but drawn as a
-/// proper chart with the strategy's own reference levels (VWAP, or the
-/// Bollinger bands) overlaid as horizontal lines, and real axis labels.
-/// `recentCloses` has no per-point timestamp (only the LAST bar's
+/// `recentCloses` data (no new backend call for the price line itself), but
+/// drawn as a proper chart with the strategy's own reference levels (VWAP,
+/// or the Bollinger bands) overlaid as horizontal lines, and real axis
+/// labels. `recentCloses` has no per-point timestamp (only the LAST bar's
 /// `computedAt` is known), so the x-axis is bar-index, oldest to newest -
 /// same honest limitation the small sparkline already had, just labelled
-/// clearly here instead of hidden.
-class SignalDetailScreen extends StatelessWidget {
+/// clearly here instead of hidden. Since there's no per-point time axis, an
+/// open position's entry is drawn as a horizontal PRICE line (same visual
+/// language as the exit-trigger lines below), not a dot at a fabricated x
+/// position - honest about what this chart can and can't show.
+///
+/// The exit-trigger lines aren't just "reference levels" - they're the
+/// literal condition each strategy's own on_bar() watches to close a
+/// position (VwapMeanReversionStrategy: price crossing back to/through
+/// VWAP; BollingerMeanReversionStrategy: price closing back above the mid
+/// band - see their source for the exact check), so they're labelled
+/// "(exit)" directly rather than left implicit.
+class SignalDetailScreen extends StatefulWidget {
   final TradingSignal signal;
 
   const SignalDetailScreen({super.key, required this.signal});
 
+  @override
+  State<SignalDetailScreen> createState() => _SignalDetailScreenState();
+}
+
+class _SignalDetailScreenState extends State<SignalDetailScreen> {
+  List<_LevelLine> _entryLines = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEntryLines();
+  }
+
+  Future<void> _loadEntryLines() async {
+    // Entry price comes from /positions, which is login-gated (real account
+    // holdings) - this screen still works fully without it, just without
+    // the entry marker, rather than forcing a login for a read-only chart.
+    if (!await AuthClient.isLoggedIn()) return;
+    try {
+      final accounts = await AuthClient.fetchPositions();
+      final tradingAccounts = widget.signal.tradingAccounts?.toSet() ?? {};
+      final lines = <_LevelLine>[];
+      for (final account in accounts) {
+        if (tradingAccounts.isNotEmpty && !tradingAccounts.contains(account.nickname)) {
+          continue; // a different strategy on this account may trade the same ticker
+        }
+        for (final position in account.positions) {
+          if (position.ticker == widget.signal.ticker) {
+            lines.add(
+              _LevelLine('Entry (${account.nickname})', position.avgEntryPrice, Colors.amber),
+            );
+          }
+        }
+      }
+      if (mounted) setState(() => _entryLines = lines);
+    } catch (_) {
+      // Silent - an entry marker is a nice-to-have overlay, not core to the chart.
+    }
+  }
+
   Color get _badgeColor {
-    switch (signal.signal) {
+    switch (widget.signal.signal) {
       case 'buy':
         return Colors.green;
       case 'sell':
@@ -27,11 +78,11 @@ class SignalDetailScreen extends StatelessWidget {
     }
   }
 
-  List<_LevelLine> get _levelLines {
-    final levels = signal.levels;
+  List<_LevelLine> get _exitLevelLines {
+    final levels = widget.signal.levels;
     if (levels == null) return [];
     if (levels.containsKey('vwap')) {
-      return [_LevelLine('VWAP', levels['vwap']!, Colors.blueAccent)];
+      return [_LevelLine('VWAP (exit)', levels['vwap']!, Colors.blueAccent)];
     }
     if (levels.containsKey('lower') && levels.containsKey('upper')) {
       final lines = [
@@ -41,7 +92,7 @@ class SignalDetailScreen extends StatelessWidget {
       if (levels.containsKey('mid')) {
         lines.add(
           _LevelLine(
-            'Mid',
+            'Mid (exit)',
             levels['mid']!,
             Colors.purpleAccent.withValues(alpha: 0.5),
           ),
@@ -54,13 +105,14 @@ class SignalDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final signal = widget.signal;
     final closes = signal.recentCloses ?? [];
-    final levelLines = _levelLines;
+    final levelLines = [..._entryLines, ..._exitLevelLines];
 
     return Scaffold(
       appBar: AppBar(title: Text('${signal.ticker} · ${signal.strategyName}')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, 16, 16, 24 + MediaQuery.of(context).padding.bottom),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
