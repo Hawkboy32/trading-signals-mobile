@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/account_sizing.dart';
 import '../models/position.dart';
+import '../models/target_config.dart';
 import 'api_client.dart';
 
 /// Login + the two password-confirmed control actions (stop/re-arm). The
@@ -124,7 +126,10 @@ class AuthClient {
     final base = await ApiClient.getBackendUrl();
     final resp = await http
         .get(Uri.parse('$base/positions'), headers: {'Authorization': 'Bearer $token'})
-        .timeout(const Duration(seconds: 15));
+        // Real broker round-trips across every linked account, measured up to ~20s
+        // when a slower broker (IBKR/IG paper) is in the mix - 15s was cutting it
+        // close to a legitimately-still-working request, not an actual hang.
+        .timeout(const Duration(seconds: 30));
     if (resp.statusCode == 401) {
       await logout();
       throw AuthException(_extractError(resp, 'Session expired - log in again.'));
@@ -136,6 +141,139 @@ class AuthClient {
     return (body['accounts'] as List<dynamic>? ?? [])
         .map((e) => AccountPositions.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// What the live bot is currently configured to trade - requires login
+  /// (same session token as /positions) but no password re-confirmation,
+  /// since this is a read, not an action.
+  static Future<TargetConfig> fetchTargetConfig() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/targets'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load trading targets.'));
+    }
+    return TargetConfig.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  /// Switches Manual/Adaptive roster mode and, in Manual mode, the ticker
+  /// list + strategy - same password-confirmation requirement as
+  /// setRiskPreset, since this changes what the bot trades from the next
+  /// poll cycle onward.
+  static Future<void> setTargetConfig({
+    required String mode,
+    required List<String> tickers,
+    required String strategyName,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/targets'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'mode': mode,
+            'tickers': tickers,
+            'strategy_name': strategyName,
+            'password': password,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  /// Per-account sliding-scale sizing state - requires login, no password
+  /// re-confirmation, same reasoning as fetchTargetConfig/fetchPositions.
+  static Future<List<AccountSizing>> fetchAccountSizing() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/sizing'), headers: {'Authorization': 'Bearer $token'})
+        // Reuses positions_service's same all-accounts broker fetch as /positions -
+        // same generous timeout for the same reason, see fetchPositions above.
+        .timeout(const Duration(seconds: 30));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load sizing.'));
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (body['accounts'] as List<dynamic>? ?? [])
+        .map((e) => AccountSizing.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Sets or clears (slideStartPct 0) one account's sliding-scale sizing
+  /// override - same password-confirmation requirement as setRiskPreset,
+  /// since this changes real position sizing from the next trade onward.
+  /// Callers re-fetch fetchAccountSizing() afterward for the fresh list
+  /// rather than patching a single-account response in place.
+  static Future<void> setAccountSizing({
+    required String accountId,
+    required double slideStartPct,
+    required double slideFloorNotional,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/sizing'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'account_id': accountId,
+            'slide_start_pct': slideStartPct,
+            'slide_floor_notional': slideFloorNotional,
+            'password': password,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
   }
 
   static Future<void> stopTrading(String password) async {

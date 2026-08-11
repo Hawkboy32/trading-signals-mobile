@@ -46,6 +46,7 @@ class PositionView:
 
 @dataclass
 class AccountView:
+    account_id: str
     nickname: str
     broker: str
     is_paper: bool
@@ -77,7 +78,7 @@ def _fetch_fresh() -> list[AccountView]:
     except Exception as e:  # noqa: BLE001
         # Whole-fetch failure (e.g. a keyring read failed) - one error entry
         # rather than crashing the endpoint.
-        return [AccountView(nickname="(all accounts)", broker="", is_paper=True, equity=None, cash=None, positions=[], error=str(e))]
+        return [AccountView(account_id="", nickname="(all accounts)", broker="", is_paper=True, equity=None, cash=None, positions=[], error=str(e))]
 
     views: list[AccountView] = []
     for broker_account in broker_accounts:
@@ -88,6 +89,7 @@ def _fetch_fresh() -> list[AccountView]:
         except Exception as e:  # noqa: BLE001
             views.append(
                 AccountView(
+                    account_id=broker_account.account_id,
                     nickname=broker_account.nickname, broker=broker_type, is_paper=broker_account.is_paper,
                     equity=None, cash=None, positions=[], error=_friendly_error(e),
                 )
@@ -98,6 +100,7 @@ def _fetch_fresh() -> list[AccountView]:
         except Exception as e:  # noqa: BLE001
             views.append(
                 AccountView(
+                    account_id=broker_account.account_id,
                     nickname=broker_account.nickname, broker=broker_type, is_paper=broker_account.is_paper,
                     equity=equity, cash=cash, positions=[], error=_friendly_error(e),
                 )
@@ -105,6 +108,7 @@ def _fetch_fresh() -> list[AccountView]:
             continue
         views.append(
             AccountView(
+                account_id=broker_account.account_id,
                 nickname=broker_account.nickname, broker=broker_type, is_paper=broker_account.is_paper,
                 equity=equity, cash=cash,
                 positions=[
