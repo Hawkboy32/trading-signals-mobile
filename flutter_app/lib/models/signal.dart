@@ -11,6 +11,9 @@ class TradingSignal {
   final String? error;
   final String? source; // which feed the bars came from, e.g. "MyAlpaca (live)" or "Polygon"
   final List<double>? recentCloses; // trailing closes for the sparkline
+  final List<double>? recentOpens; // matching trailing OHLC for the candlestick detail chart
+  final List<double>? recentHighs;
+  final List<double>? recentLows;
   final Map<String, double>? levels; // strategy's own reference levels (VWAP, bands, ...)
   final bool? marketOpen; // null = unknown (no account currently trades this ticker's asset class)
   final List<String>? tradingAccounts; // account nickname(s) that actually trade this ticker
@@ -25,6 +28,9 @@ class TradingSignal {
     required this.error,
     required this.source,
     required this.recentCloses,
+    required this.recentOpens,
+    required this.recentHighs,
+    required this.recentLows,
     required this.levels,
     required this.marketOpen,
     required this.tradingAccounts,
@@ -41,6 +47,15 @@ class TradingSignal {
       error: json['error'] as String?,
       source: json['source'] as String?,
       recentCloses: (json['recent_closes'] as List<dynamic>?)
+          ?.map((e) => (e as num).toDouble())
+          .toList(),
+      recentOpens: (json['recent_opens'] as List<dynamic>?)
+          ?.map((e) => (e as num).toDouble())
+          .toList(),
+      recentHighs: (json['recent_highs'] as List<dynamic>?)
+          ?.map((e) => (e as num).toDouble())
+          .toList(),
+      recentLows: (json['recent_lows'] as List<dynamic>?)
           ?.map((e) => (e as num).toDouble())
           .toList(),
       levels: (json['levels'] as Map<String, dynamic>?)

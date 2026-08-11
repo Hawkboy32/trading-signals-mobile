@@ -162,6 +162,9 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
                   closes: closes,
                   color: _badgeColor,
                   levelLines: levelLines,
+                  opens: signal.recentOpens,
+                  highs: signal.recentHighs,
+                  lows: signal.recentLows,
                 ),
               )
             else
@@ -224,109 +227,159 @@ class _DetailChart extends StatelessWidget {
   final List<double> closes;
   final Color color;
   final List<_LevelLine> levelLines;
+  final List<double>? opens;
+  final List<double>? highs;
+  final List<double>? lows;
 
   const _DetailChart({
     required this.closes,
     required this.color,
     required this.levelLines,
+    this.opens,
+    this.highs,
+    this.lows,
   });
+
+  bool get _hasOhlc =>
+      closes.isNotEmpty &&
+      opens != null && opens!.length == closes.length &&
+      highs != null && highs!.length == closes.length &&
+      lows != null && lows!.length == closes.length;
+
+  // Same reserved-size/hidden-titles shape on both the real chart and the
+  // transparent overlay, so their plot-area rectangles line up pixel for
+  // pixel - reservedSize still consumes layout space even with
+  // showTitles: false, which is what keeps the two charts' coordinate
+  // systems in sync in the Stack below.
+  FlTitlesData _titlesData({required bool showLeftLabels}) {
+    return FlTitlesData(
+      topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+      bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+      leftTitles: AxisTitles(
+        sideTitles: SideTitles(
+          showTitles: showLeftLabels,
+          reservedSize: 56,
+          // fl_chart always draws a label at axis min/max in addition to
+          // its own auto-spaced gridline labels, which collide/overlap
+          // whenever an auto label lands close to either edge - skip any
+          // label within 5% of the range from the boundary, since the
+          // edge label already covers that value.
+          getTitlesWidget: (value, meta) {
+            final range = meta.max - meta.min;
+            final nearMin = value != meta.min && range > 0 && (value - meta.min).abs() < range * 0.06;
+            final nearMax = value != meta.max && range > 0 && (value - meta.max).abs() < range * 0.06;
+            if (nearMin || nearMax) {
+              return const SizedBox.shrink();
+            }
+            return Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(value.toStringAsFixed(2), style: const TextStyle(fontSize: 10)),
+            );
+          },
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final spots = [
-      for (var i = 0; i < closes.length; i++) FlSpot(i.toDouble(), closes[i]),
+    final allValues = [
+      ...closes,
+      if (_hasOhlc) ...highs!,
+      if (_hasOhlc) ...lows!,
+      ...levelLines.map((l) => l.value),
     ];
-
-    final allValues = [...closes, ...levelLines.map((l) => l.value)];
     final minY = allValues.reduce((a, b) => a < b ? a : b);
     final maxY = allValues.reduce((a, b) => a > b ? a : b);
     final pad = (maxY - minY).abs() < 1e-9
         ? (maxY.abs() * 0.01 + 0.01)
         : (maxY - minY) * 0.1;
+    final plotMinY = minY - pad;
+    final plotMaxY = maxY + pad;
 
-    return LineChart(
-      LineChartData(
-        minY: minY - pad,
-        maxY: maxY + pad,
-        gridData: const FlGridData(show: true, drawVerticalLine: false),
-        titlesData: FlTitlesData(
-          topTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          rightTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          bottomTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 56,
-              // fl_chart always draws a label at axis min/max in addition to
-              // its own auto-spaced gridline labels, which collide/overlap
-              // whenever an auto label lands close to either edge - skip any
-              // label within 5% of the range from the boundary, since the
-              // edge label already covers that value.
-              getTitlesWidget: (value, meta) {
-                final range = meta.max - meta.min;
-                final nearMin = value != meta.min && range > 0 && (value - meta.min).abs() < range * 0.06;
-                final nearMax = value != meta.max && range > 0 && (value - meta.max).abs() < range * 0.06;
-                if (nearMin || nearMax) {
-                  return const SizedBox.shrink();
-                }
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: Text(
-                    value.toStringAsFixed(2),
-                    style: const TextStyle(fontSize: 10),
-                  ),
-                );
-              },
+    final borderData = FlBorderData(
+      show: true,
+      border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+    );
+    final extraLines = ExtraLinesData(
+      horizontalLines: [
+        for (final l in levelLines)
+          HorizontalLine(y: l.value, color: l.color, strokeWidth: 1.5, dashArray: [6, 4]),
+      ],
+    );
+
+    if (!_hasOhlc) {
+      final spots = [
+        for (var i = 0; i < closes.length; i++) FlSpot(i.toDouble(), closes[i]),
+      ];
+      return LineChart(
+        LineChartData(
+          minY: plotMinY,
+          maxY: plotMaxY,
+          gridData: const FlGridData(show: true, drawVerticalLine: false),
+          titlesData: _titlesData(showLeftLabels: true),
+          borderData: borderData,
+          extraLinesData: extraLines,
+          lineTouchData: LineTouchData(
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipItems: (spots) => spots
+                  .map((s) => LineTooltipItem(s.y.toStringAsFixed(4), const TextStyle(color: Colors.white)))
+                  .toList(),
             ),
           ),
-        ),
-        borderData: FlBorderData(
-          show: true,
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
-        ),
-        extraLinesData: ExtraLinesData(
-          horizontalLines: [
-            for (final l in levelLines)
-              HorizontalLine(
-                y: l.value,
-                color: l.color,
-                strokeWidth: 1.5,
-                dashArray: [6, 4],
-              ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: true,
+              curveSmoothness: 0.15,
+              color: color,
+              barWidth: 2.5,
+              dotData: const FlDotData(show: false),
+              belowBarData: BarAreaData(show: true, color: color.withValues(alpha: 0.1)),
+            ),
           ],
         ),
-        lineTouchData: LineTouchData(
-          touchTooltipData: LineTouchTooltipData(
-            getTooltipItems: (spots) => spots
-                .map(
-                  (s) => LineTooltipItem(
-                    s.y.toStringAsFixed(4),
-                    const TextStyle(color: Colors.white),
-                  ),
-                )
-                .toList(),
-          ),
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: spots,
-            isCurved: true,
-            curveSmoothness: 0.15,
-            color: color,
-            barWidth: 2.5,
-            dotData: const FlDotData(show: false),
-            belowBarData: BarAreaData(
-              show: true,
-              color: color.withValues(alpha: 0.1),
-            ),
-          ),
-        ],
+      );
+    }
+
+    final candleSpots = [
+      for (var i = 0; i < closes.length; i++)
+        CandlestickSpot(x: i.toDouble(), open: opens![i], high: highs![i], low: lows![i], close: closes[i]),
+    ];
+
+    // Reference lines drawn as thin RangeAnnotations directly on the
+    // candlestick chart itself, rather than a second overlaid chart widget -
+    // after two real bugs from the Stack-of-two-charts approach (fl_chart's
+    // LineChartPainter never draws extraLinesData with an empty/hidden
+    // lineBarsData, and even once fixed, a loosely-sized Stack let the two
+    // charts scale independently and misalign), this is structurally
+    // guaranteed to line up: it's the SAME chart instance/coordinate system
+    // as the candles, not a second one that has to match it. The trade-off
+    // is a solid thin band instead of a dashed line - RangeAnnotations has
+    // no dash pattern - a fine trade for something that's actually reliable.
+    final thickness = (plotMaxY - plotMinY) * 0.003;
+    final rangeAnnotations = RangeAnnotations(
+      horizontalRangeAnnotations: [
+        for (final l in levelLines)
+          HorizontalRangeAnnotation(y1: l.value - thickness, y2: l.value + thickness, color: l.color),
+      ],
+    );
+
+    return CandlestickChart(
+      CandlestickChartData(
+        minY: plotMinY,
+        maxY: plotMaxY,
+        candlestickSpots: candleSpots,
+        gridData: const FlGridData(show: true, drawVerticalLine: false),
+        titlesData: _titlesData(showLeftLabels: true),
+        borderData: borderData,
+        rangeAnnotations: rangeAnnotations,
+        // Default painter's own up/down colors (green/red) are already the
+        // standard convention and deliberately distinct from the amber
+        // entry / blue VWAP / purple band line colors, so candles and
+        // reference lines read as two separate visual layers with no
+        // custom painter needed.
       ),
     );
   }
