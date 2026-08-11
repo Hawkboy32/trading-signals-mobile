@@ -21,6 +21,11 @@ void _callbackDispatcher() {
 }
 
 void main() {
+  // Workmanager's plugin calls go over a platform channel, which needs the
+  // binding initialized first - calling these before ensureInitialized()
+  // throws "Binding has not yet been initialized" (caught by the error zone,
+  // non-fatal, but the periodic task silently never registers).
+  WidgetsFlutterBinding.ensureInitialized();
   Workmanager().initialize(_callbackDispatcher);
   // 15 minutes is Android's practical floor for periodic background work -
   // not a number chosen for convenience, see Mobile_App/CLAUDE_NOTES.txt.

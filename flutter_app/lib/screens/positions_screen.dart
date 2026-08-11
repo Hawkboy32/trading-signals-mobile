@@ -95,7 +95,7 @@ class _PositionsScreenState extends State<PositionsScreen> {
       );
     }
     return ListView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: EdgeInsets.fromLTRB(8, 8, 8, 24 + MediaQuery.of(context).padding.bottom),
       itemCount: accounts.length,
       itemBuilder: (context, i) => _AccountCard(account: accounts[i]),
     );
