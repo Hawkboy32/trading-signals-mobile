@@ -46,6 +46,9 @@ class SignalResult:
     error: str | None = None
     source: str | None = None  # which feed the bars came from, e.g. "MyAlpaca (live)" or "Polygon"
     recent_closes: list[float] | None = None  # trailing closes for the app's sparkline
+    recent_opens: list[float] | None = None  # matching trailing OHLC for the app's candlestick chart
+    recent_highs: list[float] | None = None
+    recent_lows: list[float] | None = None
     levels: dict[str, float] | None = None  # strategy's own reference levels, see Strategy.levels()
     # market_open/trading_accounts: only ever known via the snapshot (auto_trader.py
     # has real broker connections; this backend deliberately doesn't) - stay None
@@ -84,6 +87,9 @@ def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | Non
         computed_at=entry.get("bar_timestamp", ""),
         source=entry.get("source"),  # entry.get(...) so older snapshots without these keys still parse
         recent_closes=entry.get("recent_closes"),
+        recent_opens=entry.get("recent_opens"),
+        recent_highs=entry.get("recent_highs"),
+        recent_lows=entry.get("recent_lows"),
         levels=entry.get("levels"),
         market_open=entry.get("market_open"),
         trading_accounts=entry.get("trading_accounts"),
@@ -152,13 +158,17 @@ def compute_current_signal(
         signal = strategy.on_bar(bars, current)
         conviction = compute_conviction(strategy, bars, current) if signal != Signal.HOLD else None
         levels = compute_levels(strategy, bars, current)
+        recent_bars = bars.tail(RECENT_CLOSES_COUNT)
 
         return SignalResult(
             ticker=ticker, strategy_name=strategy_name, signal=signal.value,
             conviction=conviction, price=float(current.close),
             computed_at=current.timestamp.isoformat(),
             source=source_label,  # no fresh auto_trader.py snapshot to reuse - see _signal_from_snapshot
-            recent_closes=[float(c) for c in bars["close"].tail(RECENT_CLOSES_COUNT)],
+            recent_closes=[float(c) for c in recent_bars["close"]],
+            recent_opens=[float(o) for o in recent_bars["open"]],
+            recent_highs=[float(h) for h in recent_bars["high"]],
+            recent_lows=[float(l) for l in recent_bars["low"]],
             levels=levels,
         )
     except Exception as e:  # noqa: BLE001
