@@ -22,11 +22,14 @@ from pydantic import BaseModel
 
 import _auth
 from backtester import notifications
+from backtester.accounts import list_accounts
 from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.data import PolygonClient
+from backtester.execution import sliding_pct_equity
 from backtester.live_trades import list_recent_trades
 from backtester.risk_presets import RISK_PRESETS, apply_risk_preset
 from backtester.roster import load_roster
+from backtester.strategies import STRATEGY_REGISTRY
 from positions_service import fetch_all_positions
 from signal_service import compute_current_signal
 
@@ -281,3 +284,144 @@ def positions(username: str = Depends(_require_session)) -> dict:
     action, so the friction only needs to match "are you logged in", not
     "do you specifically mean this one tap"."""
     return {"accounts": fetch_all_positions()}
+
+
+@app.get("/targets")
+def targets(username: str = Depends(_require_session)) -> dict:
+    """What the live bot is currently configured to trade - Manual (fixed
+    strategy/ticker list) vs Adaptive roster, and the manual-mode fields
+    themselves. Login-gated like /positions (a read, no password needed) -
+    this is meaningfully more revealing than /health's bare enabled/killed
+    booleans, on par with seeing open positions."""
+    control = load_control()
+    return {
+        "mode": "roster" if control.use_roster else "manual",
+        "tickers": control.tickers,
+        "strategy_name": control.strategy_name,
+        "available_strategies": list(STRATEGY_REGISTRY.keys()),
+    }
+
+
+class TargetsRequest(BaseModel):
+    mode: str
+    tickers: list[str] = []
+    strategy_name: str = ""
+    password: str
+
+
+@app.post("/targets")
+def set_targets(req: TargetsRequest, username: str = Depends(_require_session)) -> dict:
+    """Switches Manual/Adaptive roster mode and, in Manual mode, the
+    ticker list + strategy - the same fields app.py's Auto Trading tab
+    Save button writes. Changes what the bot trades from the next poll
+    cycle onward, so it gets the same password-confirmation friction as
+    /kill and /risk-preset."""
+    if req.mode not in ("manual", "roster"):
+        raise HTTPException(status_code=400, detail='mode must be "manual" or "roster"')
+    tickers = [t.strip().upper() for t in req.tickers if t.strip()]
+    if req.mode == "manual" and not tickers:
+        raise HTTPException(status_code=400, detail="Manual mode needs at least one ticker.")
+    if req.mode == "manual" and req.strategy_name not in STRATEGY_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown strategy: {req.strategy_name}")
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    control = load_control()
+    control.use_roster = req.mode == "roster"
+    if req.mode == "manual":
+        control.tickers = tickers
+        control.strategy_name = req.strategy_name
+    save_control(control)
+    return {"ok": True, "mode": req.mode, "tickers": control.tickers, "strategy_name": control.strategy_name}
+
+
+def _account_sizing_view(account_id: str, override: dict, target_pct: float, equity_by_id: dict) -> dict:
+    equity = equity_by_id.get(account_id)
+    slide_start_pct = float(override.get("slide_start_pct", 0.0))
+    slide_floor_notional = float(override.get("slide_floor_notional", 1.0))
+    current_effective_pct = None
+    if slide_start_pct > 0 and equity is not None:
+        current_effective_pct = sliding_pct_equity(equity, slide_start_pct, target_pct, slide_floor_notional)
+    return {
+        "equity": equity,
+        "slide_start_pct": slide_start_pct,
+        "slide_floor_notional": slide_floor_notional,
+        "target_pct": target_pct,
+        "current_effective_pct": current_effective_pct,
+    }
+
+
+@app.get("/sizing")
+def sizing(username: str = Depends(_require_session)) -> dict:
+    """Per-account sliding-scale sizing (backtester.execution.sliding_pct_equity)
+    for every account currently selected for auto-trading - real live equity
+    (reusing positions_service's cached fetch, no extra broker call) joined
+    against each account's slide_start_pct/slide_floor_notional override, plus
+    the CURRENT effective rate computed live from that equity - the "what's it
+    actually trading at right now" figure that isn't a fixed number anywhere
+    else, since the slide recomputes fresh at every trade entry. Login-gated
+    like /positions - a read, no password needed."""
+    control = load_control()
+    accounts_by_id = {a["id"]: a for a in list_accounts()}
+    equity_by_id = {a["account_id"]: a["equity"] for a in fetch_all_positions() if a.get("account_id")}
+
+    rows = []
+    for account_id in control.account_ids:
+        account = accounts_by_id.get(account_id)
+        if account is None:
+            continue
+        override = control.account_sizing_overrides.get(account_id, {})
+        view = _account_sizing_view(account_id, override, control.sizing_value, equity_by_id)
+        rows.append({
+            "account_id": account_id,
+            "nickname": account["nickname"],
+            "broker": account["broker"],
+            "is_paper": account["is_paper"],
+            **view,
+        })
+    return {"accounts": rows}
+
+
+class SizingRequest(BaseModel):
+    account_id: str
+    slide_start_pct: float
+    slide_floor_notional: float = 1.0
+    password: str
+
+
+@app.post("/sizing")
+def set_sizing(req: SizingRequest, username: str = Depends(_require_session)) -> dict:
+    """Sets or clears (slide_start_pct=0) one account's sliding-scale sizing
+    override - the same account_sizing_overrides the dashboard's Auto Trading
+    tab writes per-account, under Target accounts. Changes real position
+    sizing from the next trade onward, so it gets the same password-
+    confirmation friction as /kill and /risk-preset."""
+    control = load_control()
+    if req.account_id not in control.account_ids:
+        raise HTTPException(status_code=400, detail="That account isn't currently selected for auto-trading.")
+    if req.slide_start_pct < 0:
+        raise HTTPException(status_code=400, detail="slide_start_pct can't be negative.")
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    control = load_control()
+    if req.slide_start_pct == 0:
+        control.account_sizing_overrides.pop(req.account_id, None)
+    else:
+        control.account_sizing_overrides[req.account_id] = {
+            "slide_start_pct": req.slide_start_pct,
+            "slide_floor_notional": req.slide_floor_notional,
+        }
+    save_control(control)
+
+    accounts_by_id = {a["id"]: a for a in list_accounts()}
+    equity_by_id = {a["account_id"]: a["equity"] for a in fetch_all_positions() if a.get("account_id")}
+    override = control.account_sizing_overrides.get(req.account_id, {})
+    view = _account_sizing_view(req.account_id, override, control.sizing_value, equity_by_id)
+    account = accounts_by_id.get(req.account_id, {})
+    return {
+        "ok": True,
+        "account_id": req.account_id,
+        "nickname": account.get("nickname"),
+        **view,
+    }
