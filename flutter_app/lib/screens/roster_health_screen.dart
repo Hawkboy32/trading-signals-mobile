@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../models/roster.dart';
+import '../models/roster_recommendation.dart';
 import '../services/api_client.dart';
+import '../services/auth_client.dart';
+import '../widgets/password_confirm_dialog.dart';
 
 /// "Active 3d ago" / "Paused 5h ago" - same coarse Xm/Xh/Xd granularity as
 /// the home-screen widget's own relative-time label, kept consistent rather
@@ -30,6 +33,9 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
   String? _error;
   bool _loading = true;
 
+  RosterRecommendation? _recommendation;
+  bool _recActionInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +58,56 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
         _loading = false;
       });
     }
+    await _refreshRecommendation();
+  }
+
+  Future<void> _refreshRecommendation() async {
+    // Login-gated (real trading-config data) - this screen is otherwise
+    // fully public, so a not-logged-in visitor just doesn't see the banner
+    // rather than being forced to log in for a read-only roster view.
+    if (!await AuthClient.isLoggedIn()) return;
+    try {
+      final rec = await AuthClient.fetchRosterRecommendation();
+      if (!mounted) return;
+      setState(() => _recommendation = rec);
+    } catch (_) {
+      // Silent - same reasoning as the entry-price overlay on the signal
+      // detail chart: a nice-to-have, not core to this screen.
+    }
+  }
+
+  Future<void> _respondToRecommendation(String action) async {
+    final rec = _recommendation;
+    if (rec == null || _recActionInFlight) return;
+    final verb = action == 'apply' ? 'Apply' : 'Dismiss';
+    final message = action == 'apply'
+        ? 'Updates the live roster to match this recommendation:\n\n${rec.summary.join('\n')}'
+        : 'Leaves the roster exactly as it is now - this recommendation will be discarded.';
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: '$verb roster recommendation?',
+      message: message,
+      confirmLabel: verb,
+    );
+    if (password == null || !mounted) return;
+
+    setState(() => _recActionInFlight = true);
+    try {
+      await AuthClient.respondToRosterRecommendation(action: action, password: password);
+      if (!mounted) return;
+      setState(() => _recommendation = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(action == 'apply' ? 'Roster updated.' : 'Recommendation dismissed.')),
+      );
+      await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _recActionInFlight = false);
+    }
   }
 
   @override
@@ -60,6 +116,55 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
       appBar: AppBar(title: const Text('Roster Health')),
       body: RefreshIndicator(onRefresh: _refresh, child: _buildBody()),
     );
+  }
+
+  List<Widget> _recommendationBannerWidgets() {
+    final rec = _recommendation;
+    if (rec == null) return [];
+    return [
+      Card(
+        margin: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+        color: Theme.of(context).colorScheme.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.notifications_active, size: 18),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Roster change ready to review', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'From scan run #${rec.scanRunId} (${rec.numScanResults} results). Nothing applied yet.',
+                style: const TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              for (final line in rec.summary) Text('• $line', style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  FilledButton(
+                    onPressed: _recActionInFlight ? null : () => _respondToRecommendation('apply'),
+                    child: const Text('Apply'),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: _recActionInFlight ? null : () => _respondToRecommendation('dismiss'),
+                    child: const Text('Dismiss'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ];
   }
 
   Widget _buildBody() {
@@ -82,6 +187,7 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
     if (data.entries.isEmpty && data.candidates.isEmpty) {
       return ListView(
         children: [
+          ..._recommendationBannerWidgets(),
           const SizedBox(height: 80),
           Center(
             child: Text('No active, paused, or candidate combos right now.', style: TextStyle(color: Colors.grey[600])),
@@ -94,6 +200,7 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
       // clipped by the system nav bar/gesture area on the real device.
       padding: EdgeInsets.only(top: 8, bottom: 24 + MediaQuery.of(context).padding.bottom),
       children: [
+        ..._recommendationBannerWidgets(),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Text(
