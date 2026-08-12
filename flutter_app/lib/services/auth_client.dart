@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/account_sizing.dart';
+import '../models/deposit.dart';
 import '../models/position.dart';
 import '../models/roster_recommendation.dart';
 import '../models/target_config.dart';
@@ -359,6 +360,106 @@ class AuthClient {
             'Authorization': 'Bearer $token',
           },
           body: jsonEncode({'action': action, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  /// Per-account deposit log + True P&L - login-gated, no password (a read,
+  /// like fetchPositions/fetchAccountSizing).
+  static Future<List<AccountDeposits>> fetchDeposits() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/deposits'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load deposits.'));
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (body['accounts'] as List<dynamic>? ?? [])
+        .map((e) => AccountDeposits.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Records a deposit - password-confirmed like every other write here,
+  /// since it's a financial record the True P&L figure relies on.
+  static Future<void> addDeposit({
+    required String accountId,
+    required double amount,
+    required String date,
+    required String note,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/deposits'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'account_id': accountId,
+            'amount': amount,
+            'date': date,
+            'note': note,
+            'password': password,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  /// index into that account's AccountDeposits.entries (most-recent-first) -
+  /// same password-confirmation as addDeposit.
+  static Future<void> removeDeposit({
+    required String accountId,
+    required int index,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/deposits/remove'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'account_id': accountId, 'index': index, 'password': password}),
         )
         .timeout(const Duration(seconds: 10));
     if (resp.statusCode == 401) {

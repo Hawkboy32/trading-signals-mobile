@@ -32,6 +32,7 @@ class OpenPosition {
 }
 
 class AccountPositions {
+  final String accountId;
   final String nickname;
   final String broker;
   final bool isPaper;
@@ -41,6 +42,7 @@ class AccountPositions {
   final String? error;
 
   AccountPositions({
+    required this.accountId,
     required this.nickname,
     required this.broker,
     required this.isPaper,
@@ -52,6 +54,7 @@ class AccountPositions {
 
   factory AccountPositions.fromJson(Map<String, dynamic> json) {
     return AccountPositions(
+      accountId: json['account_id'] as String? ?? '',
       nickname: json['nickname'] as String,
       broker: json['broker'] as String? ?? '',
       isPaper: json['is_paper'] as bool? ?? true,

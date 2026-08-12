@@ -25,6 +25,7 @@ from backtester import notifications
 from backtester.accounts import list_accounts
 from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.data import PolygonClient
+from backtester.deposits import deposits_for, record_deposit, remove_deposit, total_deposited
 from backtester.execution import sliding_pct_equity
 from backtester.live_trades import list_recent_trades
 from backtester.risk_presets import RISK_PRESETS, apply_risk_preset
@@ -473,3 +474,67 @@ def respond_to_roster_recommendation(
         save_roster(pending.proposed_state)
     clear_pending()
     return {"ok": True, "action": req.action}
+
+
+@app.get("/deposits")
+def deposits(username: str = Depends(_require_session)) -> dict:
+    """Per-account deposit log + True P&L (equity minus total deposited) -
+    same real-broker-equity join as /sizing (reuses positions_service's
+    cached fetch, no extra broker call). Login-gated like /positions - real
+    account financial history, not a hypothetical."""
+    equity_by_id = {a["account_id"]: a["equity"] for a in fetch_all_positions() if a.get("account_id")}
+    rows = []
+    for account in list_accounts():
+        account_id = account["id"]
+        deposited = total_deposited(account_id)
+        equity = equity_by_id.get(account_id)
+        rows.append({
+            "account_id": account_id,
+            "nickname": account["nickname"],
+            "broker": account["broker"],
+            "is_paper": account["is_paper"],
+            "equity": equity,
+            "total_deposited": deposited,
+            "true_pnl": (equity - deposited) if equity is not None else None,
+            "entries": [
+                {"amount": d.amount, "date": d.date, "note": d.note, "recorded_at": d.recorded_at}
+                for d in deposits_for(account_id)
+            ],
+        })
+    return {"accounts": rows}
+
+
+class AddDepositRequest(BaseModel):
+    account_id: str
+    amount: float
+    date: str
+    note: str = ""
+    password: str
+
+
+@app.post("/deposits")
+def add_deposit(req: AddDepositRequest, username: str = Depends(_require_session)) -> dict:
+    """Records a deposit - password-confirmed like every other write here,
+    even though it doesn't change what the bot trades, since it's a
+    financial record the user relies on for True P&L."""
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    try:
+        record_deposit(req.account_id, req.amount, req.date, req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "total_deposited": total_deposited(req.account_id)}
+
+
+class RemoveDepositRequest(BaseModel):
+    account_id: str
+    index: int  # into deposits_for(account_id)'s own most-recent-first order
+    password: str
+
+
+@app.post("/deposits/remove")
+def remove_deposit_endpoint(req: RemoveDepositRequest, username: str = Depends(_require_session)) -> dict:
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    remove_deposit(req.account_id, req.index)
+    return {"ok": True, "total_deposited": total_deposited(req.account_id)}

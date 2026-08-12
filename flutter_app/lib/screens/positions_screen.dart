@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../models/deposit.dart';
 import '../models/position.dart';
 import '../services/auth_client.dart';
+import '../widgets/password_confirm_dialog.dart';
 import 'login_screen.dart';
 
 /// Live open positions + unrealized P&L, per linked account - the first
 /// screen that shows real broker data rather than "what the strategy would
 /// do". Requires login (same session as Stop/Re-arm), prompted automatically
-/// on first visit if not already logged in.
+/// on first visit if not already logged in. Also carries each account's
+/// manual deposit log (see backtester.deposits) for a True P&L figure that
+/// isn't inflated by the deposits themselves - equity and "money actually
+/// in" belong together, same reasoning the dashboard's Accounts tab uses.
 class PositionsScreen extends StatefulWidget {
   const PositionsScreen({super.key});
 
@@ -17,6 +22,7 @@ class PositionsScreen extends StatefulWidget {
 
 class _PositionsScreenState extends State<PositionsScreen> {
   List<AccountPositions>? _data;
+  Map<String, AccountDeposits> _depositsByAccountId = {};
   String? _error;
   bool _loading = true;
 
@@ -56,6 +62,34 @@ class _PositionsScreenState extends State<PositionsScreen> {
         _error = e.toString();
         _loading = false;
       });
+    }
+    await _refreshDeposits();
+  }
+
+  Future<void> _refreshDeposits() async {
+    try {
+      final deposits = await AuthClient.fetchDeposits();
+      if (!mounted) return;
+      setState(() {
+        _depositsByAccountId = {for (final d in deposits) d.accountId: d};
+      });
+    } catch (_) {
+      // Silent - True P&L is a nice-to-have overlay on this screen, not
+      // core to it; positions still show fine without it.
+    }
+  }
+
+  Future<void> _openDeposits(AccountPositions account) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _DepositsSheet(
+        account: account,
+        deposits: _depositsByAccountId[account.accountId],
+      ),
+    );
+    if (result == true) {
+      await _refreshDeposits();
     }
   }
 
@@ -97,15 +131,21 @@ class _PositionsScreenState extends State<PositionsScreen> {
     return ListView.builder(
       padding: EdgeInsets.fromLTRB(8, 8, 8, 24 + MediaQuery.of(context).padding.bottom),
       itemCount: accounts.length,
-      itemBuilder: (context, i) => _AccountCard(account: accounts[i]),
+      itemBuilder: (context, i) => _AccountCard(
+        account: accounts[i],
+        deposits: _depositsByAccountId[accounts[i].accountId],
+        onTapDeposits: () => _openDeposits(accounts[i]),
+      ),
     );
   }
 }
 
 class _AccountCard extends StatelessWidget {
   final AccountPositions account;
+  final AccountDeposits? deposits;
+  final VoidCallback onTapDeposits;
 
-  const _AccountCard({required this.account});
+  const _AccountCard({required this.account, required this.deposits, required this.onTapDeposits});
 
   @override
   Widget build(BuildContext context) {
@@ -143,6 +183,30 @@ class _AccountCard extends StatelessWidget {
                   style: TextStyle(color: Colors.grey[600], fontSize: 13),
                 ),
               ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                onTap: onTapDeposits,
+                child: Row(
+                  children: [
+                    Icon(Icons.savings_outlined, size: 15, color: Colors.grey[600]),
+                    const SizedBox(width: 4),
+                    Text(
+                      deposits == null
+                          ? 'Deposits'
+                          : 'Deposited \$${deposits!.totalDeposited.toStringAsFixed(2)}'
+                              '${deposits!.truePnl != null ? '  ·  True P&L ${deposits!.truePnl! >= 0 ? '+' : ''}\$${deposits!.truePnl!.toStringAsFixed(2)}' : ''}',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, size: 16, color: Theme.of(context).colorScheme.primary),
+                  ],
+                ),
+              ),
+            ),
             if (account.error != null) ...[
               const SizedBox(height: 8),
               Text(account.error!, style: const TextStyle(color: Colors.orange, fontSize: 12)),
@@ -192,6 +256,188 @@ class _PositionRow extends StatelessWidget {
             style: TextStyle(color: color, fontWeight: FontWeight.bold),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Deposit history + add/remove for one account, opened from its card above.
+/// Pops `true` if anything changed, so the caller knows to re-fetch totals.
+class _DepositsSheet extends StatefulWidget {
+  final AccountPositions account;
+  final AccountDeposits? deposits;
+
+  const _DepositsSheet({required this.account, required this.deposits});
+
+  @override
+  State<_DepositsSheet> createState() => _DepositsSheetState();
+}
+
+class _DepositsSheetState extends State<_DepositsSheet> {
+  final _amountController = TextEditingController();
+  final _noteController = TextEditingController();
+  DateTime _date = DateTime.now();
+  bool _actionInFlight = false;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addDeposit() async {
+    final amount = double.tryParse(_amountController.text);
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid amount.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    final dateStr = '${_date.year.toString().padLeft(4, '0')}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}';
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: 'Record deposit?',
+      message: 'Adds \$${amount.toStringAsFixed(2)} to ${widget.account.nickname}\'s deposit total ($dateStr).',
+      confirmLabel: 'Record',
+    );
+    if (password == null || !mounted) return;
+
+    setState(() => _actionInFlight = true);
+    try {
+      await AuthClient.addDeposit(
+        accountId: widget.account.accountId,
+        amount: amount,
+        date: dateStr,
+        note: _noteController.text.trim(),
+        password: password,
+      );
+      if (!mounted) return;
+      _amountController.clear();
+      _noteController.clear();
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _actionInFlight = false);
+    }
+  }
+
+  Future<void> _removeDeposit(int index, DepositEntry entry) async {
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: 'Remove this deposit?',
+      message: '${entry.date}: \$${entry.amount.toStringAsFixed(2)}${entry.note.isNotEmpty ? ' - ${entry.note}' : ''}',
+      confirmLabel: 'Remove',
+      isDestructive: true,
+    );
+    if (password == null || !mounted) return;
+
+    setState(() => _actionInFlight = true);
+    try {
+      await AuthClient.removeDeposit(accountId: widget.account.accountId, index: index, password: password);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _actionInFlight = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = widget.deposits?.entries ?? [];
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16, right: 16, top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom + MediaQuery.of(context).padding.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.account.nickname, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(
+              'Total deposited: \$${(widget.deposits?.totalDeposited ?? 0).toStringAsFixed(2)}',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const Divider(height: 24),
+            if (entries.isEmpty)
+              Text('No deposits recorded yet.', style: TextStyle(color: Colors.grey[500]))
+            else
+              ...entries.asMap().entries.map((e) {
+                final entry = e.value;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${entry.date}: \$${entry.amount.toStringAsFixed(2)}'
+                          '${entry.note.isNotEmpty ? ' - ${entry.note}' : ''}',
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: _actionInFlight ? null : () => _removeDeposit(e.key, entry),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            const Divider(height: 24),
+            Text('Record a deposit', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _amountController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Amount (\$)', border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _actionInFlight
+                      ? null
+                      : () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: _date,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime.now(),
+                          );
+                          if (picked != null) setState(() => _date = picked);
+                        },
+                  child: Text('${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _noteController,
+              decoration: const InputDecoration(labelText: 'Note (optional)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _actionInFlight ? null : _addDeposit,
+                child: const Text('Record deposit'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
