@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/account_sizing.dart';
 import '../models/position.dart';
+import '../models/roster_recommendation.dart';
 import '../models/target_config.dart';
 import 'api_client.dart';
 
@@ -304,6 +305,64 @@ class AuthClient {
       final detail = _extractError(resp, 'Not authorized.');
       // A session that's actually expired should send the user back to the
       // login screen rather than looking like a wrong-password error forever.
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  /// A computed-but-not-yet-applied roster change, if the overnight
+  /// post-close check found one - null otherwise. Login-gated, no password
+  /// (a read, like fetchAccountSizing).
+  static Future<RosterRecommendation?> fetchRosterRecommendation() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/roster-recommendation'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load roster recommendation.'));
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final rec = body['recommendation'] as Map<String, dynamic>?;
+    return rec == null ? null : RosterRecommendation.fromJson(rec);
+  }
+
+  /// Approve ("apply") or reject ("dismiss") the pending roster
+  /// recommendation - same password-confirmation friction as setRiskPreset,
+  /// since applying changes what the live bot trades.
+  static Future<void> respondToRosterRecommendation({
+    required String action,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/roster-recommendation'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'action': action, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
       if (detail.toLowerCase().contains('session')) {
         await logout();
       }

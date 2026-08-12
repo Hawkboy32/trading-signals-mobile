@@ -28,7 +28,7 @@ from backtester.data import PolygonClient
 from backtester.execution import sliding_pct_equity
 from backtester.live_trades import list_recent_trades
 from backtester.risk_presets import RISK_PRESETS, apply_risk_preset
-from backtester.roster import load_roster
+from backtester.roster import clear_pending, load_pending, load_roster, save_roster
 from backtester.strategies import STRATEGY_REGISTRY
 from positions_service import fetch_all_positions
 from signal_service import compute_current_signal
@@ -425,3 +425,51 @@ def set_sizing(req: SizingRequest, username: str = Depends(_require_session)) ->
         "nickname": account.get("nickname"),
         **view,
     }
+
+
+@app.get("/roster-recommendation")
+def roster_recommendation(username: str = Depends(_require_session)) -> dict:
+    """A computed-but-not-yet-applied roster change, if the overnight
+    post-close check (auto_trader.py's _maybe_check_roster_gap, see
+    roster.compute_recommendation) found one - null otherwise. Login-gated
+    like /positions - a read, no password needed. Nothing has changed yet;
+    this is purely "is there something to review"."""
+    pending = load_pending()
+    if pending is None:
+        return {"recommendation": None}
+    return {
+        "recommendation": {
+            "computed_at": pending.computed_at,
+            "scan_run_id": pending.scan_run_id,
+            "num_scan_results": pending.num_scan_results,
+            "summary": pending.summary,
+        }
+    }
+
+
+class RosterRecommendationRequest(BaseModel):
+    action: str  # "apply" | "dismiss"
+    password: str
+
+
+@app.post("/roster-recommendation")
+def respond_to_roster_recommendation(
+    req: RosterRecommendationRequest, username: str = Depends(_require_session)
+) -> dict:
+    """Apply or dismiss the pending roster recommendation - same
+    password-confirmation friction as /kill and /risk-preset, since applying
+    changes what the live bot trades (same effect as the dashboard's own
+    "Re-evaluate roster now" button, just pre-computed overnight)."""
+    if req.action not in ("apply", "dismiss"):
+        raise HTTPException(status_code=400, detail='action must be "apply" or "dismiss"')
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    pending = load_pending()
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No pending recommendation to respond to.")
+
+    if req.action == "apply":
+        save_roster(pending.proposed_state)
+    clear_pending()
+    return {"ok": True, "action": req.action}
