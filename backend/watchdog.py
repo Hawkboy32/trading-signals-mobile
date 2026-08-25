@@ -35,6 +35,8 @@ from pathlib import Path
 
 import requests
 
+from backtester import logging_setup  # noqa: E402 - this venv has backtester installed too
+
 BACKEND_DIR = Path(__file__).resolve().parent
 PYTHON = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
 HEALTH_URL = "http://127.0.0.1:8600/health"
@@ -60,6 +62,10 @@ def _launch() -> subprocess.Popen:
 
 
 def main() -> None:
+    # 2026-08-24: this watchdog's own print() calls were going nowhere too -
+    # launched via pythonw.exe (no console), same blind spot that let
+    # auto_trader.py die with zero trace the same day. See logging_setup.py.
+    logging_setup.configure("mobile_backend_watchdog")
     proc = _launch()
     time.sleep(STARTUP_GRACE_SECONDS)
     while True:

@@ -24,8 +24,11 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import asdict, dataclass
+from datetime import date
 
+from backtester import position_attribution
 from backtester.accounts import build_broker_accounts, list_accounts
+from backtester.live_trades import realized_pnl_by_account_between
 
 CACHE_TTL_SECONDS = 30  # short - real broker calls, but avoid hammering IG/Alpaca/IBKR on every phone poll
 
@@ -42,6 +45,14 @@ class PositionView:
     current_price: float | None
     market_value: float
     unrealized_pl: float
+    # From position_attribution.py's record_open (2026-08-16) - the EFFECTIVE
+    # sizing this specific entry actually used, already resolved through any
+    # per-account slide/override and the GARCH size_multiplier. All three
+    # None for a position opened before this existed, or opened manually
+    # outside auto_trader.py's own flow - "sizing unknown", not a guess.
+    sizing_mode: str | None = None
+    sizing_value: float | None = None
+    dollars_committed: float | None = None
 
 
 @dataclass
@@ -54,6 +65,16 @@ class AccountView:
     cash: float | None
     positions: list[PositionView]
     error: str | None = None
+    # REALIZED P&L today only (closed trades, live_trades.db) - deliberately
+    # not a mark-to-market "day's change" figure (2026-08-17): most brokers
+    # here (IBKR/IG/Coinbase/Kraken) have no equity-history API to compare
+    # against (only Alpaca does, see brokers/*.py's get_equity_history), so
+    # a true day's-change would silently work for some accounts and not
+    # others. Realized-only comes from OUR OWN trade log instead, so every
+    # account gets the same honest figure - it just won't reflect an open
+    # position's move since this morning, same "unrealized is separate"
+    # distinction the rest of this app already keeps.
+    realized_pnl_today: float | None = None
 
 
 def _friendly_error(exc: Exception) -> str:
@@ -68,11 +89,36 @@ def _friendly_error(exc: Exception) -> str:
     return msg[:140]
 
 
+def _position_view(p, attr: dict | None) -> PositionView:
+    return PositionView(
+        ticker=p.ticker, qty=p.qty, side=p.side,
+        avg_entry_price=p.avg_entry_price, current_price=p.current_price,
+        market_value=p.market_value, unrealized_pl=p.unrealized_pl,
+        sizing_mode=(attr or {}).get("sizing_mode"),
+        sizing_value=(attr or {}).get("sizing_value"),
+        dollars_committed=(attr or {}).get("dollars_committed"),
+    )
+
+
 def _fetch_fresh() -> list[AccountView]:
     linked = list_accounts()
     if not linked:
         return []
     broker_by_account_id = {a["id"]: a["broker"] for a in linked}
+    # Loaded once per fetch, not once per position - a plain local JSON read,
+    # cheap next to the real broker calls this function already makes.
+    try:
+        attribution = position_attribution.load_map()
+    except Exception:  # noqa: BLE001
+        attribution = {}  # sizing becomes "unknown" for this fetch rather than failing the whole endpoint
+    # Also a plain local sqlite read (live_trades.db), not a broker call -
+    # computed once per fetch and reused for every account below, same
+    # reasoning as attribution above.
+    try:
+        today = date.today().isoformat()
+        pnl_today_by_account = realized_pnl_by_account_between(today, today + "T23:59:59")
+    except Exception:  # noqa: BLE001
+        pnl_today_by_account = {}
     try:
         broker_accounts = build_broker_accounts([a["id"] for a in linked])
     except Exception as e:  # noqa: BLE001
@@ -83,6 +129,7 @@ def _fetch_fresh() -> list[AccountView]:
     views: list[AccountView] = []
     for broker_account in broker_accounts:
         broker_type = broker_by_account_id.get(broker_account.account_id, "")
+        pnl_today = pnl_today_by_account.get(broker_account.account_id, 0.0)
         try:
             snapshot = broker_account.get_account_snapshot()
             equity, cash = snapshot.equity, snapshot.cash
@@ -92,6 +139,7 @@ def _fetch_fresh() -> list[AccountView]:
                     account_id=broker_account.account_id,
                     nickname=broker_account.nickname, broker=broker_type, is_paper=broker_account.is_paper,
                     equity=None, cash=None, positions=[], error=_friendly_error(e),
+                    realized_pnl_today=pnl_today,
                 )
             )
             continue
@@ -103,6 +151,7 @@ def _fetch_fresh() -> list[AccountView]:
                     account_id=broker_account.account_id,
                     nickname=broker_account.nickname, broker=broker_type, is_paper=broker_account.is_paper,
                     equity=equity, cash=cash, positions=[], error=_friendly_error(e),
+                    realized_pnl_today=pnl_today,
                 )
             )
             continue
@@ -112,14 +161,11 @@ def _fetch_fresh() -> list[AccountView]:
                 nickname=broker_account.nickname, broker=broker_type, is_paper=broker_account.is_paper,
                 equity=equity, cash=cash,
                 positions=[
-                    PositionView(
-                        ticker=p.ticker, qty=p.qty, side=p.side,
-                        avg_entry_price=p.avg_entry_price, current_price=p.current_price,
-                        market_value=p.market_value, unrealized_pl=p.unrealized_pl,
-                    )
+                    _position_view(p, attribution.get(f"{broker_account.account_id}|{p.ticker}"))
                     for p in positions
                 ],
                 error=None,
+                realized_pnl_today=pnl_today,
             )
         )
     return views

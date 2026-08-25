@@ -1,14 +1,25 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../models/bars.dart';
 import '../models/signal.dart';
+import '../services/api_client.dart';
 import '../services/auth_client.dart';
 
-/// The bigger, tap-through view of a signal card's sparkline - same
-/// `recentCloses` data (no new backend call for the price line itself), but
+/// The bigger, tap-through view of a signal card's sparkline - by default the
+/// same `recentCloses` data (no new backend call for the price line itself),
 /// drawn as a proper chart with the strategy's own reference levels (VWAP,
 /// or the Bollinger bands) overlaid as horizontal lines, and real axis
-/// labels. `recentCloses` has no per-point timestamp (only the LAST bar's
+/// labels.
+///
+/// A 1m/5m/15m granularity toggle (2026-08-25) sits above the chart. 1m is the
+/// default and costs nothing extra (it's the data the signal already
+/// carries, and the granularity the strategies genuinely evaluate on);
+/// picking 5m or 15m fetches from the backend's /bars endpoint, which resolves
+/// through the same live-broker chain as everything else. Switching swaps
+/// all four OHLC arrays together, never mixing granularities.
+///
+/// Bars have no per-point timestamp (only the LAST bar's
 /// `computedAt` is known), so the x-axis is bar-index, oldest to newest -
 /// same honest limitation the small sparkline already had, just labelled
 /// clearly here instead of hidden. Since there's no per-point time axis, an
@@ -34,10 +45,53 @@ class SignalDetailScreen extends StatefulWidget {
 class _SignalDetailScreenState extends State<SignalDetailScreen> {
   List<_LevelLine> _entryLines = [];
 
+  /// Selected candle granularity, in minutes. 1 is the default because the
+  /// signal already CARRIES 1-minute bars (recentCloses etc.) - opening this
+  /// screen costs no extra network call at all, and only switching to a
+  /// coarser bar fetches anything. Also the honest default: 1m is the granularity the
+  /// strategies themselves actually evaluate on, so it's what the signal
+  /// badge and levels above the chart genuinely correspond to.
+  int _granularityMinutes = 1;
+  BarSeries? _fetchedBars; // non-null only once a non-default granularity loaded
+  bool _loadingBars = false;
+  String? _barsError;
+
   @override
   void initState() {
     super.initState();
     _loadEntryLines();
+  }
+
+  Future<void> _selectGranularity(int minutes) async {
+    if (minutes == _granularityMinutes && (minutes == 1 || _fetchedBars != null)) {
+      return; // already showing this, and not in a failed state worth retrying
+    }
+    setState(() {
+      _granularityMinutes = minutes;
+      _barsError = null;
+    });
+    if (minutes == 1) {
+      // Back to the signal's own bundled bars - no fetch needed.
+      setState(() => _fetchedBars = null);
+      return;
+    }
+    setState(() => _loadingBars = true);
+    try {
+      final series = await ApiClient.fetchBars(
+        widget.signal.ticker, multiplier: minutes, timespan: 'minute',
+      );
+      if (!mounted) return;
+      setState(() {
+        _fetchedBars = series;
+        _loadingBars = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingBars = false;
+        _barsError = e.toString();
+      });
+    }
   }
 
   Future<void> _loadEntryLines() async {
@@ -56,7 +110,17 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
         for (final position in account.positions) {
           if (position.ticker == widget.signal.ticker) {
             lines.add(
-              _LevelLine('Entry (${account.nickname})', position.avgEntryPrice, Colors.amber),
+              _LevelLine(
+                // "LIVE" spelled out, not left to the nickname: the real
+                // account names are actively misleading about this
+                // ("MyAlpaca" is paper, "AlpacaLive" is live), and this line
+                // marks where real money went in.
+                account.isPaper
+                    ? 'Entry ${account.nickname}'
+                    : 'Entry ${account.nickname} (LIVE)',
+                position.avgEntryPrice,
+                _entryLineColor(account.isPaper),
+              ),
             );
           }
         }
@@ -106,7 +170,18 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final signal = widget.signal;
-    final closes = signal.recentCloses ?? [];
+    // At 1m the signal's own bundled bars are used verbatim; at any other
+    // granularity the freshly fetched series replaces all four OHLC arrays
+    // together (never mixed - a close from one granularity against a high
+    // from another would be silently wrong).
+    final series = _fetchedBars;
+    final usingFetched = series != null && _granularityMinutes != 1;
+    final closes = usingFetched ? series.closes : (signal.recentCloses ?? []);
+    final opens = usingFetched ? series.opens : signal.recentOpens;
+    final highs = usingFetched ? series.highs : signal.recentHighs;
+    final lows = usingFetched ? series.lows : signal.recentLows;
+    final barsSource = usingFetched ? series.source : signal.source;
+    final barsComputedAt = usingFetched ? series.computedAt : signal.computedAt;
     final levelLines = [..._entryLines, ..._exitLevelLines];
 
     return Scaffold(
@@ -154,17 +229,68 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
                   style: TextStyle(color: Colors.grey[600]),
                 ),
               ),
-            const SizedBox(height: 24),
-            if (closes.length >= 2)
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 1, label: Text('1m')),
+                    ButtonSegment(value: 5, label: Text('5m')),
+                    ButtonSegment(value: 15, label: Text('15m')),
+                  ],
+                  selected: {_granularityMinutes},
+                  onSelectionChanged: _loadingBars
+                      ? null
+                      : (selected) => _selectGranularity(selected.first),
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+                if (_loadingBars) ...[
+                  const SizedBox(width: 12),
+                  const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (_barsError != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Column(
+                  children: [
+                    Text(
+                      'Could not load ${_granularityMinutes}m bars.',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _barsError!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: () => _selectGranularity(_granularityMinutes),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
+            else if (closes.length >= 2)
               SizedBox(
                 height: 320,
                 child: _DetailChart(
                   closes: closes,
                   color: _badgeColor,
                   levelLines: levelLines,
-                  opens: signal.recentOpens,
-                  highs: signal.recentHighs,
-                  lows: signal.recentLows,
+                  opens: opens,
+                  highs: highs,
+                  lows: lows,
                 ),
               )
             else
@@ -197,16 +323,31 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
             ],
             const SizedBox(height: 12),
             Text(
-              'Last ${closes.length} bars · oldest to newest, left to right. '
-              'Computed at ${signal.computedAt}.',
+              'Last ${closes.length} × ${_granularityMinutes}m bars · oldest to '
+              'newest, left to right. Latest bar $barsComputedAt.',
               style: TextStyle(fontSize: 11, color: Colors.grey[500]),
             ),
-            if (signal.source != null)
+            if (barsSource != null)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
-                  signal.source!,
+                  barsSource,
                   style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+              ),
+            // The strategy evaluates on 1-minute bars, so the signal badge,
+            // conviction and every reference level above were all computed
+            // from 1m data. They stay valid as PRICE levels on a 5m chart
+            // (a price is a price), but the candles no longer match the
+            // granularity the decision was actually made on - said plainly
+            // rather than left for the user to infer.
+            if (_granularityMinutes != 1)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Signal, conviction and levels are computed on 1m bars - '
+                  'only the candles above are ${_granularityMinutes}m.',
+                  style: TextStyle(fontSize: 11, color: Colors.amber[700]),
                 ),
               ),
           ],
@@ -215,6 +356,14 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
     );
   }
 }
+
+/// Entry-line colour by account type. The same ticker is usually held on
+/// several accounts at DIFFERENT average entry prices, so the chart can show
+/// several entry lines at once - without this they were all one colour and
+/// you couldn't tell which line was real money. Amber (live) deliberately
+/// carries more visual weight than grey (paper); grey is also kept clear of
+/// the band/VWAP colours below so nothing reads as a strategy level.
+Color _entryLineColor(bool isPaper) => isPaper ? Colors.blueGrey.shade300 : Colors.amber;
 
 class _LevelLine {
   final String label;

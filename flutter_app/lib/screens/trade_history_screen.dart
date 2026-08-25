@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/trade.dart';
 import '../services/api_client.dart';
+import '../widgets/collapsible_card.dart';
 
 /// Real, closed round-trip trades - not "what the bot would do right now"
 /// like the main screen, but "what it actually did". Backed by
@@ -84,10 +85,32 @@ class _TradeHistoryScreenState extends State<TradeHistoryScreen> {
         ],
       );
     }
-    return ListView.builder(
-      padding: EdgeInsets.fromLTRB(0, 8, 0, 24 + MediaQuery.of(context).padding.bottom),
-      itemCount: trades.length,
-      itemBuilder: (context, i) => _TradeCard(trade: trades[i], formatTimestamp: _formatTimestamp),
+    final liveTrades = trades.where((t) => !t.isPaper).toList();
+    final paperTrades = trades.where((t) => t.isPaper).toList();
+
+    List<Widget> tradeCards(List<TradeRecord> list) =>
+        list.map((t) => _TradeCard(trade: t, formatTimestamp: _formatTimestamp)).toList();
+
+    return ListView(
+      padding: EdgeInsets.fromLTRB(8, 8, 8, 24 + MediaQuery.of(context).padding.bottom),
+      children: [
+        if (liveTrades.isNotEmpty)
+          CollapsibleCard(
+            title: const Text('Live (real money)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red)),
+            trailing: Text('${liveTrades.length}', style: TextStyle(color: Colors.grey[600])),
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+            children: tradeCards(liveTrades),
+          ),
+        if (paperTrades.isNotEmpty)
+          CollapsibleCard(
+            title: const Text('Paper', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            trailing: Text('${paperTrades.length}', style: TextStyle(color: Colors.grey[600])),
+            initiallyExpanded: false,
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+            children: tradeCards(paperTrades),
+          ),
+      ],
     );
   }
 }
@@ -139,12 +162,12 @@ class _TradeCard extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               children: [
-                Text('${trade.entryPrice.toStringAsFixed(4)}', style: const TextStyle(fontSize: 13)),
+                Text(trade.entryPrice.toStringAsFixed(4), style: const TextStyle(fontSize: 13)),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 6),
                   child: Icon(Icons.arrow_forward, size: 14),
                 ),
-                Text('${trade.exitPrice.toStringAsFixed(4)}', style: const TextStyle(fontSize: 13)),
+                Text(trade.exitPrice.toStringAsFixed(4), style: const TextStyle(fontSize: 13)),
                 const Spacer(),
                 Text('qty ${trade.qty.toStringAsFixed(4)}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
               ],

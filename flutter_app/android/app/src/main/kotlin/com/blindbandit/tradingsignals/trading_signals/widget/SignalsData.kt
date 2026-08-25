@@ -7,8 +7,13 @@ import org.json.JSONArray
  * screen (bubble/BubbleContentActivity.kt) - both read the exact same
  * signals_json/last_refreshed data saved by widget_service.dart's
  * refreshWidget(), so the parsing/formatting logic lives here once rather
- * than being duplicated across two native surfaces. */
-data class SignalRow(val ticker: String, val signal: String)
+ * than being duplicated across two native surfaces.
+ *
+ * price: added 2026-08-17 HUD redesign - optional (0.0 default) so an
+ * older cached signals_json blob (written before this field existed, still
+ * possible right after an app update until the next refresh) parses fine
+ * rather than crashing the widget's whole render pass. */
+data class SignalRow(val ticker: String, val signal: String, val price: Double = 0.0)
 
 object SignalsData {
     /** Best-effort parse - a malformed/missing value just yields an empty
@@ -19,7 +24,11 @@ object SignalsData {
             val arr = JSONArray(json)
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
-                SignalRow(obj.getString("ticker"), obj.getString("signal"))
+                SignalRow(
+                    obj.getString("ticker"),
+                    obj.getString("signal"),
+                    obj.optDouble("price", 0.0),
+                )
             }
         } catch (_: Exception) {
             emptyList()
@@ -41,13 +50,48 @@ object SignalsData {
      * Float - reading a double-backed key with getFloat() throws a
      * ClassCastException that crashes the widget's whole render pass (the
      * real cause of "can't show content" found 2026-08-09). Every value
-     * widget_service.dart saves with HomeWidget.saveWidgetData<double> (only
-     * open_positions_pnl today) MUST be read through this, not getFloat(). */
+     * widget_service.dart saves with HomeWidget.saveWidgetData<double>
+     * MUST be read through this, not getFloat(). */
     fun readDouble(prefs: SharedPreferences, key: String): Double {
         return try {
             java.lang.Double.longBitsToDouble(prefs.getLong(key, 0L))
         } catch (_: Exception) {
             0.0
+        }
+    }
+
+    /** Defensive wrappers for every OTHER prefs type the widget reads
+     * (2026-08-17) - a single wrong-type read anywhere in WidgetContent()
+     * throws a ClassCastException that kills the ENTIRE Compose render pass,
+     * and because RemoteViews updates are atomic, Android just silently
+     * keeps showing whatever the widget last rendered successfully instead
+     * of any visible error - "the widget looks unchanged" is exactly what
+     * that failure mode looks like from the outside, same class of bug as
+     * the double/getFloat one above, just for Int/Boolean/String. Every
+     * prefs read in WidgetContent() goes through one of these now, not the
+     * raw SharedPreferences getters, so one bad key degrades that one field
+     * to its default instead of blanking the whole widget. */
+    fun readInt(prefs: SharedPreferences, key: String, default: Int = 0): Int {
+        return try {
+            prefs.getInt(key, default)
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    fun readBoolean(prefs: SharedPreferences, key: String, default: Boolean = false): Boolean {
+        return try {
+            prefs.getBoolean(key, default)
+        } catch (_: Exception) {
+            default
+        }
+    }
+
+    fun readString(prefs: SharedPreferences, key: String, default: String = ""): String {
+        return try {
+            prefs.getString(key, default) ?: default
+        } catch (_: Exception) {
+            default
         }
     }
 

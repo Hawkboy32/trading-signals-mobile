@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/api_client.dart';
 
@@ -16,6 +17,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _controller = TextEditingController();
   String? _status; // null = untested, otherwise a human-readable result
   bool _checking = false;
+  String? _appVersion;
+  String? _backendVersion; // null until fetched, or if /health didn't have it (older backend)
 
   @override
   void initState() {
@@ -23,18 +26,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ApiClient.getBackendUrl().then((url) {
       if (mounted) setState(() => _controller.text = url);
     });
+    // Added 2026-08-24 alongside backend_version in /health - so "which
+    // build is this" is a glance at Settings instead of a guess, the exact
+    // ambiguity a stale-APK mixup (2026-08-09) cost real debugging time on.
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _appVersion = '${info.version}+${info.buildNumber}');
+    });
+    ApiClient.fetchBackendVersion().then((v) {
+      if (mounted) setState(() => _backendVersion = v);
+    });
   }
 
+  /// Auto-saves on a successful test (2026-08-24) - Test and Save used to be
+  /// two fully separate actions, and a real report showed exactly the
+  /// confusing failure mode that split invites: type the correct address,
+  /// tap Test (genuinely reachable, shown correctly), but never tap Save -
+  /// every OTHER screen keeps using whatever was persisted before (a wiped-
+  /// out default after a fresh install, in the reported case), so the app
+  /// looks broken everywhere except the one screen that just tested the
+  /// unsaved value. A successful test IS good evidence this address is the
+  /// right one to use, so acting on that immediately removes the trap
+  /// rather than requiring a second, easy-to-forget tap.
   Future<void> _testConnection() async {
     setState(() {
       _checking = true;
       _status = null;
     });
-    final reachable = await ApiClient.checkHealth(_controller.text.trim());
+    final address = _controller.text.trim();
+    final reachable = await ApiClient.checkHealth(address);
+    if (reachable) {
+      await ApiClient.setBackendUrl(address);
+    }
     if (!mounted) return;
     setState(() {
       _checking = false;
-      _status = reachable ? 'Reachable' : 'Could not reach backend';
+      _status = reachable ? 'Reachable - saved' : 'Could not reach backend';
     });
   }
 
@@ -124,6 +150,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             OutlinedButton(
               onPressed: _showBubble,
               child: const Text('Show floating bubble'),
+            ),
+            const SizedBox(height: 32),
+            const Divider(),
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                'App v${_appVersion ?? '…'}'
+                '${_backendVersion != null ? ' · Backend v$_backendVersion' : ''}',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
             ),
           ],
         ),
