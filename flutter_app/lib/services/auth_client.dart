@@ -2,11 +2,14 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/account_detail.dart';
 import '../models/account_sizing.dart';
 import '../models/deposit.dart';
 import '../models/position.dart';
+import '../models/risk_control.dart';
 import '../models/roster_recommendation.dart';
 import '../models/target_config.dart';
+import '../models/tax.dart';
 import 'api_client.dart';
 
 /// Login + the two password-confirmed control actions (stop/re-arm). The
@@ -31,8 +34,24 @@ class AuthClient {
     await _storage.write(key: _tokenKey, value: token);
   }
 
+  /// The Android Keystore key backing this value can be invalidated (e.g. by
+  /// a reinstall, or certain OS-level security/lock-screen changes), which
+  /// makes the stored blob permanently undecryptable - flutter_secure_storage
+  /// then throws PlatformException(BadPaddingException) instead of returning
+  /// null (real report 2026-08-24: this propagated, unhandled, all the way
+  /// out of isLoggedIn() into refreshWidget()'s unguarded
+  /// checkPositionsAndNotify() call, surfacing everywhere as a generic
+  /// "Could not reach backend" even though the backend was never involved).
+  /// The old token is unusable either way, so treat a decrypt failure as
+  /// logged-out and clear it - every caller already handles "no token" as
+  /// the normal case.
   static Future<String?> getToken() async {
-    return _storage.read(key: _tokenKey);
+    try {
+      return await _storage.read(key: _tokenKey);
+    } catch (_) {
+      await _storage.delete(key: _tokenKey);
+      return null;
+    }
   }
 
   static Future<void> logout() async {
@@ -67,9 +86,10 @@ class AuthClient {
     await _saveToken(body['token'] as String);
   }
 
-  /// {enabled, killed, risk_preset} from /health - unauthenticated, just
-  /// enough to decide which of Stop/Start to show and which risk preset (if
-  /// any) is currently highlighted as active.
+  /// {enabled, killed, risk_preset, sizing_value} from /health -
+  /// unauthenticated, just enough to decide which of Stop/Start to show,
+  /// which risk preset (if any) is currently highlighted as active, and what
+  /// to prefill the custom sizing field with.
   static Future<Map<String, dynamic>?> fetchControlState() async {
     try {
       final base = await ApiClient.getBackendUrl();
@@ -80,6 +100,7 @@ class AuthClient {
         'enabled': body['enabled'] as bool? ?? false,
         'killed': body['killed'] as bool? ?? false,
         'risk_preset': body['risk_preset'] as String?,
+        'sizing_value': (body['sizing_value'] as num?)?.toDouble(),
       };
     } catch (_) {
       return null;
@@ -103,6 +124,40 @@ class AuthClient {
             'Authorization': 'Bearer $token',
           },
           body: jsonEncode({'preset': preset, 'password': password}),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  /// Sets per-trade sizing to any value between 1 and 100 (% of equity), not
+  /// just the three named presets - same password-confirmation requirement
+  /// as setRiskPreset, since this changes real position sizing from the next
+  /// trade onward. Applying a custom value does not update whichever preset
+  /// name /health still reports as active, same as the dashboard's own
+  /// Advanced Settings field - see risk_presets.py's own docstring.
+  static Future<void> setCustomSizing(double sizingValue, String password) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/custom-sizing'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'sizing_value': sizingValue, 'password': password}),
         )
         .timeout(const Duration(seconds: 10));
     if (resp.statusCode == 401) {
@@ -473,6 +528,213 @@ class AuthClient {
       throw AuthException(_extractError(resp, 'Request failed.'));
     }
   }
+
+  /// GBP capital-gains ESTIMATE for the current UK tax year - login-gated,
+  /// no password (a read, like fetchDeposits).
+  static Future<TaxSummary> fetchTaxSummary() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/tax-summary'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load tax summary.'));
+    }
+    return TaxSummary.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  static Future<TaxSettings> fetchTaxSettings() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/tax-settings'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Could not load tax settings.'));
+    }
+    return TaxSettings.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  /// Password-confirmed like addDeposit, even though this only changes a
+  /// display calculation - it's a financial figure the user relies on.
+  static Future<void> updateTaxSettings({
+    required double cgtAllowanceGbp,
+    required double cgtRatePct,
+    required double gbpUsdRate,
+    required Map<String, String> accountCurrencies,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/tax-settings'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'cgt_allowance_gbp': cgtAllowanceGbp,
+            'cgt_rate_pct': cgtRatePct,
+            'gbp_usd_rate': gbpUsdRate,
+            'account_currencies': accountCurrencies,
+            'password': password,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Manual controls. Every one of these is a WRITE, so the backend demands
+  // the password fresh in the request on top of the session token — see the
+  // /kill and /rearm precedent. Note there is deliberately NO "open a
+  // position" method here: mobile can close a position but never opens one,
+  // so a mis-tap on a phone can only ever reduce exposure.
+  // ---------------------------------------------------------------------
+
+  /// Shared plumbing for a password-confirmed POST: identical auth, session
+  /// expiry and error extraction across all of them, so a new control can't
+  /// accidentally skip a step.
+  static Future<Map<String, dynamic>> _postAuthed(String path, Map<String, dynamic> body) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base$path'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 30)); // broker round-trips are slower than a config write
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+    try {
+      return jsonDecode(resp.body) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<Map<String, dynamic>> _getAuthed(String path) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base$path'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+    return jsonDecode(resp.body) as Map<String, dynamic>;
+  }
+
+  /// Market-close one open position in full. Returns the broker's response;
+  /// `queued` is true when the market was shut and the order sits until the
+  /// next open (normal, not a failure).
+  static Future<Map<String, dynamic>> closePosition({
+    required String accountId,
+    required String ticker,
+    required String password,
+  }) =>
+      _postAuthed('/positions/close',
+          {'account_id': accountId, 'ticker': ticker, 'password': password});
+
+  /// Balances, all three P&L figures, open positions and closed round trips
+  /// for one account - assembled server-side into a single call.
+  static Future<AccountDetail> fetchAccountDetail(String accountId) async =>
+      AccountDetail.fromJson(await _getAuthed('/account-detail?account_id=$accountId'));
+
+  /// Per-account drawdown-breaker state (which accounts are halted, and why).
+  static Future<List<AccountRiskStatus>> fetchAccountRisk() async {
+    final body = await _getAuthed('/account-risk');
+    return (body['accounts'] as List<dynamic>? ?? [])
+        .map((e) => AccountRiskStatus.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Clear a tripped max-drawdown breaker. Re-baselines peak equity to the
+  /// account's CURRENT equity, otherwise it would re-trip immediately.
+  static Future<void> resetAccountBreaker({
+    required String accountId,
+    required String password,
+  }) async =>
+      _postAuthed('/account-risk/reset', {'account_id': accountId, 'password': password});
+
+  static Future<RosterSettings> fetchRosterSettings() async =>
+      RosterSettings.fromJson(await _getAuthed('/roster-settings'));
+
+  static Future<void> saveRosterSettings(RosterSettings s, String password) async =>
+      _postAuthed('/roster-settings', {...s.toJson(), 'password': password});
+
+  static Future<ProtectiveExits> fetchProtectiveExits() async =>
+      ProtectiveExits.fromJson(await _getAuthed('/protective-exits'));
+
+  /// Stop-loss / take-profit for positions opened FROM NOW ON — anything
+  /// already open was submitted without a bracket and is unaffected.
+  static Future<void> saveProtectiveExits(ProtectiveExits e, String password) async =>
+      _postAuthed('/protective-exits', {...e.toJson(), 'password': password});
+
+  /// Manually bench or re-activate one roster combo, overriding the automatic
+  /// rules. Activating grants the same one-trade streak grace an auto-release
+  /// does, so a frozen losing streak can't instantly re-pause it.
+  static Future<void> setRosterEntryStatus({
+    required String ticker,
+    required String strategyName,
+    required String action, // 'pause' | 'activate'
+    required String password,
+  }) async =>
+      _postAuthed('/roster/entry-status', {
+        'ticker': ticker,
+        'strategy_name': strategyName,
+        'action': action,
+        'password': password,
+      });
 
   static String _extractError(http.Response resp, String fallback) {
     try {

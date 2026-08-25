@@ -12,13 +12,92 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
+import pandas as pd
+
 from backtester import current_signals
-from backtester.accounts import infer_asset_class
+from backtester.accounts import account_asset_class, build_broker_accounts, infer_asset_class, list_accounts
 from backtester.conviction import compute_conviction, compute_levels
 from backtester.data import PolygonClient
 from backtester.oanda_data import OandaDataClient, OandaError
 from backtester.strategies import build_strategy
 from backtester.strategy import Bar, Signal
+
+# Preference order for the crypto direct-fetch fallback below - matches
+# auto_trader.py's _pick_live_data_source reasoning exactly: Coinbase's
+# get_live_bars can page back several days, Kraken's OHLC endpoint can't
+# page backward at all (confirmed live 2026-08-20, ~12h ceiling regardless
+# of how far back you ask) - so Coinbase is tried first, Kraken only if
+# Coinbase isn't linked/reachable.
+_CRYPTO_BROKER_PREFERENCE = ("coinbase", "kraken")
+
+_live_crypto_account = False  # False = not yet resolved, None = resolved-to-unavailable
+
+
+def _get_live_crypto_account():
+    """Lazily built, cached for the process lifetime - same pattern as
+    auto_trader.py's _get_oanda_client. Finds the first linked, live
+    (non-paper) crypto account matching _CRYPTO_BROKER_PREFERENCE and
+    exposing get_live_bars; returns None (falls back to Polygon) if no such
+    account is linked, mirroring exactly what auto_trader.py's own fallback
+    chain does when nothing better is available."""
+    global _live_crypto_account
+    if _live_crypto_account is not False:
+        return _live_crypto_account
+    candidates = {
+        broker_name: acct for acct in list_accounts()
+        if not acct["is_paper"] and account_asset_class(acct) == "crypto"
+        for broker_name in [acct["broker"]]
+    }
+    for broker_name in _CRYPTO_BROKER_PREFERENCE:
+        acct = candidates.get(broker_name)
+        if acct is None:
+            continue
+        try:
+            built = build_broker_accounts([acct["id"]])
+        except Exception:  # noqa: BLE001 - a broken/unreachable link just falls through to Polygon
+            continue
+        if built and hasattr(built[0], "get_live_bars"):
+            _live_crypto_account = built[0]
+            return _live_crypto_account
+    _live_crypto_account = None
+    return None
+
+
+_live_equity_account = False  # False = not yet resolved, None = resolved-to-unavailable
+
+
+def _get_live_equity_account():
+    """Same pattern as _get_live_crypto_account, for equities. Added
+    2026-08-20 alongside it, after a real gap was caught live: the shared
+    snapshot goes stale (>SNAPSHOT_STALE_SECONDS) whenever auto_trader.py
+    stops rewriting a ticker's entry every cycle - which happens legitimately
+    whenever that ticker's market is closed, not just when auto_trader.py is
+    down - and this fallback had branches for forex/crypto but NONE for
+    equities, so it fell straight to Polygon every time that happened
+    (confirmed on a real device: PSKY/ZBRA/WTW/BIIB all showing "Polygon
+    (direct)" at 20-25min staleness with the market closed, auto_trader.py
+    itself perfectly healthy). AlpacaBroker is currently the only broker
+    class exposing get_live_bars for equities (see auto_trader.py's
+    _pick_live_data_source) - prefers a live (non-paper) account, same
+    "prefer real, not simulated" reasoning as the crypto helper, but the data
+    itself is identical either way (Alpaca's IEX feed doesn't differ by
+    paper/live status) - a paper-only-linked setup still gets real live bars,
+    just isn't preferred over a live one if both exist."""
+    global _live_equity_account
+    if _live_equity_account is not False:
+        return _live_equity_account
+    linked = list_accounts()
+    equity_accounts = [a for a in linked if account_asset_class(a) == "equity"]
+    for acct in sorted(equity_accounts, key=lambda a: a["is_paper"]):  # live (False) sorts before paper (True)
+        try:
+            built = build_broker_accounts([acct["id"]])
+        except Exception:  # noqa: BLE001 - a broken/unreachable link just falls through to Polygon
+            continue
+        if built and hasattr(built[0], "get_live_bars"):
+            _live_equity_account = built[0]
+            return _live_equity_account
+    _live_equity_account = None
+    return None
 
 # Same flat window auto_trader.py's LOOKBACK_DAYS uses - enough history for
 # any strategy's default window, even on daily bars. Not required_lookback()
@@ -96,6 +175,105 @@ def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | Non
     )
 
 
+def fetch_live_bars(
+    ticker: str,
+    from_date: date,
+    to_date: date,
+    client: PolygonClient,
+    multiplier: int = 1,
+    timespan: str = "minute",
+) -> tuple[pd.DataFrame, str]:
+    """Bars for `ticker` from the best LIVE source for its asset class,
+    with a human-readable label for where they came from.
+
+    Same preference as auto_trader.py's own fallback chain: OANDA for forex
+    (data only - IG stays the only forex execution venue; see
+    CLAUDE_NOTES.txt), a live crypto broker (Coinbase preferred, see
+    _get_live_crypto_account) for crypto, a live equity broker (Alpaca, see
+    _get_live_equity_account) for equities - the equity and crypto branches
+    added 2026-08-20, Polygon is backtesting-only from here on, project-wide,
+    not just in auto_trader.py. Polygon remains ONLY as the last-resort
+    fallback when a live source is unavailable or returns nothing.
+
+    In compute_current_signal's use this is the SECOND line of defense - the
+    shared snapshot already carries auto_trader.py's own live-sourced bars
+    when it's running AND fresh; this is what matters whenever that snapshot
+    goes stale for a reason OTHER than auto_trader.py being down - e.g. a
+    closed market, where auto_trader.py legitimately stops rewriting that
+    ticker's entry every cycle (real gap found 2026-08-20: equities used to
+    always fall through to Polygon the moment the snapshot aged past
+    SNAPSHOT_STALE_SECONDS, even with auto_trader.py perfectly healthy).
+
+    Extracted from compute_current_signal 2026-08-25 so the /bars endpoint
+    (the app's 1m/5m candle toggle) resolves its source through exactly this
+    same chain rather than a second, drifting copy of it - every broker's
+    get_live_bars already takes multiplier/timespan, so an arbitrary
+    granularity needs no per-broker work here.
+    """
+    # DELIBERATELY no IG branch here, even though IGBroker gained a
+    # get_live_bars() on 2026-08-25 for index tickers (I:NDX). IG's
+    # historical-price allowance is only 10,000 points per WEEK, and
+    # auto_trader.py already spends part of it inside a tight
+    # market-open window (see its _index_bars_window_open). This backend
+    # polls on its own independent schedule, so calling IG here too would
+    # double-spend the same shared weekly budget for what is only a DISPLAY
+    # refresh. Index tickers therefore fall through to Polygon below - which
+    # is fine for display, and the app usually shows auto_trader's own
+    # IG-sourced bars anyway via the shared snapshot (_signal_from_snapshot).
+    bars = None
+    source_label = "Polygon (direct)"
+    asset_class = infer_asset_class(ticker)
+    if asset_class == "forex":
+        try:
+            bars = OandaDataClient().get_live_bars(
+                ticker=ticker, from_date=from_date.isoformat(), to_date=to_date.isoformat(),
+                multiplier=multiplier, timespan=timespan,
+            )
+            if bars.empty:
+                bars = None
+            else:
+                source_label = "OANDA (direct)"
+        except OandaError:
+            bars = None  # OANDA_API_KEY not set yet - fall through to Polygon
+    elif asset_class == "crypto":
+        crypto_account = _get_live_crypto_account()
+        if crypto_account is not None:
+            try:
+                bars = crypto_account.get_live_bars(
+                    ticker=ticker, from_date=from_date.isoformat(), to_date=to_date.isoformat(),
+                    multiplier=multiplier, timespan=timespan,
+                )
+                if bars.empty:
+                    bars = None
+                else:
+                    source_label = f"{crypto_account.nickname} (direct)"
+            except Exception:  # noqa: BLE001 - a transient exchange-API error just falls through to Polygon
+                bars = None
+    elif asset_class == "equity":
+        equity_account = _get_live_equity_account()
+        if equity_account is not None:
+            try:
+                bars = equity_account.get_live_bars(
+                    ticker=ticker, from_date=from_date.isoformat(), to_date=to_date.isoformat(),
+                    multiplier=multiplier, timespan=timespan,
+                )
+                if bars.empty:
+                    bars = None
+                else:
+                    source_label = f"{equity_account.nickname} (direct)"
+            except Exception:  # noqa: BLE001 - a transient broker-API error just falls through to Polygon
+                bars = None
+    if bars is None:
+        bars = client.get_aggregates(
+            ticker=ticker,
+            from_date=from_date.isoformat(),
+            to_date=to_date.isoformat(),
+            multiplier=multiplier,
+            timespan=timespan,
+        )
+    return bars, source_label
+
+
 def compute_current_signal(
     ticker: str, strategy_name: str, params: dict, client: PolygonClient
 ) -> SignalResult:
@@ -115,34 +293,9 @@ def compute_current_signal(
     try:
         to_date = date.today()
         from_date = to_date - timedelta(days=LOOKBACK_DAYS)
-        bars = None
-        source_label = "Polygon (direct)"
-        # Same preference as auto_trader.py's own fallback chain: OANDA for
-        # forex once OANDA_API_KEY is set (data only - IG stays the only
-        # forex execution venue; see CLAUDE_NOTES.txt). This is the SECOND
-        # line of defense - the shared snapshot above already carries
-        # auto_trader.py's own OANDA-sourced bars when it's running; this
-        # only matters if auto_trader.py itself isn't up.
-        if infer_asset_class(ticker) == "forex":
-            try:
-                bars = OandaDataClient().get_live_bars(
-                    ticker=ticker, from_date=from_date.isoformat(), to_date=to_date.isoformat(),
-                    multiplier=1, timespan="minute",
-                )
-                if bars.empty:
-                    bars = None
-                else:
-                    source_label = "OANDA (direct)"
-            except OandaError:
-                bars = None  # OANDA_API_KEY not set yet - fall through to Polygon
-        if bars is None:
-            bars = client.get_aggregates(
-                ticker=ticker,
-                from_date=from_date.isoformat(),
-                to_date=to_date.isoformat(),
-                multiplier=1,
-                timespan="minute",
-            )
+        bars, source_label = fetch_live_bars(
+            ticker, from_date, to_date, client, multiplier=1, timespan="minute",
+        )
         if bars.empty or len(bars) < 2:
             return SignalResult(
                 ticker=ticker, strategy_name=strategy_name, signal=Signal.HOLD.value,

@@ -7,6 +7,14 @@ class OpenPosition {
   final double? currentPrice;
   final double marketValue;
   final double unrealizedPl;
+  // From position_attribution.py (2026-08-16) - the EFFECTIVE sizing THIS
+  // entry actually used (already resolved through any per-account slide and
+  // the GARCH size_multiplier), not today's global setting. All three null
+  // for a position opened before this existed, or opened manually outside
+  // auto_trader.py - "sizing unknown", never guessed.
+  final String? sizingMode; // "pct_equity" / "fixed_dollars" / "fixed_shares"
+  final double? sizingValue;
+  final double? dollarsCommitted;
 
   OpenPosition({
     required this.ticker,
@@ -16,7 +24,26 @@ class OpenPosition {
     required this.currentPrice,
     required this.marketValue,
     required this.unrealizedPl,
+    this.sizingMode,
+    this.sizingValue,
+    this.dollarsCommitted,
   });
+
+  /// Human-readable "sized at" label, or null if unknown - the widget
+  /// decides how to render "unknown" rather than this model guessing.
+  String? get sizingLabel {
+    if (sizingMode == null || sizingValue == null) return null;
+    switch (sizingMode) {
+      case 'pct_equity':
+        return '${sizingValue!.toStringAsFixed(1)}% of equity';
+      case 'fixed_dollars':
+        return r'$' '${sizingValue!.toStringAsFixed(2)} fixed';
+      case 'fixed_shares':
+        return '${sizingValue!.toStringAsFixed(0)} shares fixed';
+      default:
+        return null;
+    }
+  }
 
   factory OpenPosition.fromJson(Map<String, dynamic> json) {
     return OpenPosition(
@@ -27,6 +54,9 @@ class OpenPosition {
       currentPrice: (json['current_price'] as num?)?.toDouble(),
       marketValue: (json['market_value'] as num).toDouble(),
       unrealizedPl: (json['unrealized_pl'] as num).toDouble(),
+      sizingMode: json['sizing_mode'] as String?,
+      sizingValue: (json['sizing_value'] as num?)?.toDouble(),
+      dollarsCommitted: (json['dollars_committed'] as num?)?.toDouble(),
     );
   }
 }
@@ -40,6 +70,10 @@ class AccountPositions {
   final double? cash;
   final List<OpenPosition> positions;
   final String? error;
+  // REALIZED P&L today only (closed trades) - not a mark-to-market
+  // day's-change figure, since most brokers here have no equity-history API
+  // to diff against. See positions_service.py's AccountView docstring.
+  final double? realizedPnlToday;
 
   AccountPositions({
     required this.accountId,
@@ -50,6 +84,7 @@ class AccountPositions {
     required this.cash,
     required this.positions,
     required this.error,
+    this.realizedPnlToday,
   });
 
   factory AccountPositions.fromJson(Map<String, dynamic> json) {
@@ -64,6 +99,7 @@ class AccountPositions {
           .map((e) => OpenPosition.fromJson(e as Map<String, dynamic>))
           .toList(),
       error: json['error'] as String?,
+      realizedPnlToday: (json['realized_pnl_today'] as num?)?.toDouble(),
     );
   }
 }

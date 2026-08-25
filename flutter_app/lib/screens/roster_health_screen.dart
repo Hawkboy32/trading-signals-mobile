@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../models/roster.dart';
+import '../models/risk_control.dart';
 import '../models/roster_recommendation.dart';
 import '../services/api_client.dart';
 import '../services/auth_client.dart';
+import '../widgets/collapsible_card.dart';
 import '../widgets/password_confirm_dialog.dart';
 
 /// "Active 3d ago" / "Paused 5h ago" - same coarse Xm/Xh/Xd granularity as
@@ -110,10 +112,41 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
     }
   }
 
+  Future<void> _openRosterSettings() async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _RosterSettingsSheet(),
+    );
+    if (changed == true) await _refresh();
+  }
+
+  Future<void> _openAccountRisk() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _AccountRiskSheet(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Roster Health')),
+      appBar: AppBar(
+        title: const Text('Roster Health'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.health_and_safety_outlined),
+            tooltip: 'Account risk / circuit breakers',
+            onPressed: _openAccountRisk,
+          ),
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Roster settings',
+            onPressed: _openRosterSettings,
+          ),
+        ],
+      ),
       body: RefreshIndicator(onRefresh: _refresh, child: _buildBody()),
     );
   }
@@ -198,28 +231,33 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
     return ListView(
       // Bottom padding well past the default 8dp - the last card was getting
       // clipped by the system nav bar/gesture area on the real device.
-      padding: EdgeInsets.only(top: 8, bottom: 24 + MediaQuery.of(context).padding.bottom),
+      padding: EdgeInsets.fromLTRB(8, 8, 8, 24 + MediaQuery.of(context).padding.bottom),
       children: [
         ..._recommendationBannerWidgets(),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Text(
-            '$activeCount of ${data.config.rosterSize} active slots filled',
-            style: TextStyle(color: Colors.grey[600], fontSize: 13),
-          ),
+        CollapsibleCard(
+          title: const Text('Active roster', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          trailing: Text('$activeCount/${data.config.rosterSize}', style: TextStyle(color: Colors.grey[600])),
+          padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+          children: data.entries.isEmpty
+              ? [
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text('No active or paused combos right now.', style: TextStyle(color: Colors.grey[600])),
+                  ),
+                ]
+              : data.entries.map((e) => _RosterCard(entry: e, config: data.config, onChanged: _refresh)).toList(),
         ),
-        ...data.entries.map((e) => _RosterCard(entry: e, config: data.config)),
-        if (data.candidates.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text(
-              'Candidates - not yet promoted (top ${data.candidates.length} of ${data.config.numCandidates}, ranked by backtest score)',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-            ),
+        if (data.candidates.isNotEmpty)
+          CollapsibleCard(
+            title: const Text('Candidates', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            trailing: Text('top ${data.candidates.length} of ${data.config.numCandidates}',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+            // Not yet promoted / not actionable - secondary to the active
+            // roster above, so collapsed by default.
+            initiallyExpanded: false,
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+            children: data.candidates.map((e) => _CandidateCard(entry: e)).toList(),
           ),
-          ...data.candidates.map((e) => _CandidateCard(entry: e)),
-        ],
       ],
     );
   }
@@ -228,12 +266,52 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
 class _RosterCard extends StatelessWidget {
   final RosterEntry entry;
   final RosterConfig config;
+  final Future<void> Function() onChanged;
 
-  const _RosterCard({required this.entry, required this.config});
+  const _RosterCard({required this.entry, required this.config, required this.onChanged});
 
   bool get _isPaused => entry.status == 'paused';
 
   Color get _statusColor => _isPaused ? Colors.orange : Colors.green;
+
+  /// Manual override of the automatic pause/promote rules. Activating grants
+  /// the same one-trade streak grace an auto-release does - without it a
+  /// combo benched on a frozen losing streak would be re-paused on the very
+  /// next poll and the button would appear to do nothing.
+  Future<void> _setStatus(BuildContext context, String action) async {
+    final activating = action == 'activate';
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: activating ? 'Activate ${entry.ticker}?' : 'Pause ${entry.ticker}?',
+      message: activating
+          ? '${entry.ticker} / ${entry.strategyName} starts trading again on the next '
+              'poll cycle, overriding the automatic rules.\n\n'
+              'It gets one trade of grace on the losing-streak rule, then is judged normally.'
+          : '${entry.ticker} / ${entry.strategyName} stops opening new positions. '
+              'It can still CLOSE anything it currently holds.',
+      confirmLabel: activating ? 'Activate' : 'Pause',
+      isDestructive: !activating,
+    );
+    if (password == null || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await AuthClient.setRosterEntryStatus(
+        ticker: entry.ticker,
+        strategyName: entry.strategyName,
+        action: action,
+        password: password,
+      );
+      messenger.showSnackBar(SnackBar(
+        content: Text('${entry.ticker} ${activating ? 'activated' : 'paused'}.'),
+      ));
+      await onChanged();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not update ${entry.ticker}: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -323,6 +401,18 @@ class _RosterCard extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: Colors.grey[600]),
               ),
             ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause, size: 18),
+                label: Text(_isPaused ? 'Activate' : 'Pause'),
+                style: TextButton.styleFrom(
+                  foregroundColor: _isPaused ? Colors.green : Colors.orange,
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: () => _setStatus(context, _isPaused ? 'activate' : 'pause'),
+              ),
+            ),
           ],
         ),
       ),
@@ -360,6 +450,261 @@ class _CandidateCard extends StatelessWidget {
               'score ${entry.backtestScore.toStringAsFixed(2)}',
               style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w600),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Edit the roster's own rules. Only the fields shown here are sent; the
+/// backend carries every other config value forward, so saving from the phone
+/// can't blank a setting the app doesn't display.
+class _RosterSettingsSheet extends StatefulWidget {
+  const _RosterSettingsSheet();
+
+  @override
+  State<_RosterSettingsSheet> createState() => _RosterSettingsSheetState();
+}
+
+class _RosterSettingsSheetState extends State<_RosterSettingsSheet> {
+  RosterSettings? _settings;
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final s = await AuthClient.fetchRosterSettings();
+      if (mounted) setState(() => _settings = s);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  Future<void> _save() async {
+    final s = _settings;
+    if (s == null) return;
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: 'Save roster settings?',
+      message: 'Changes take effect on the next poll cycle. Existing entries are '
+          're-checked against the new thresholds.',
+      confirmLabel: 'Save',
+    );
+    if (password == null || !mounted) return;
+
+    setState(() => _saving = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      await AuthClient.saveRosterSettings(s, password);
+      messenger.showSnackBar(const SnackBar(content: Text('Roster settings saved.')));
+      navigator.pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        messenger.showSnackBar(
+          SnackBar(content: Text('Could not save: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Widget _stepper(String label, String help, int value, int min, int max, ValueChanged<int> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(help, style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.remove_circle_outline),
+            onPressed: value > min ? () => onChanged(value - 1) : null,
+          ),
+          SizedBox(
+            width: 28,
+            child: Text('$value',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline),
+            onPressed: value < max ? () => onChanged(value + 1) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = _settings;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: 16 + MediaQuery.of(context).viewInsets.bottom + MediaQuery.of(context).padding.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Roster settings',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            if (_error != null)
+              Text(_error!, style: const TextStyle(color: Colors.red))
+            else if (s == null)
+              const Center(
+                  child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            else ...[
+              _stepper('Roster size', 'Max combos trading at once', s.rosterSize, 1, 20,
+                  (v) => setState(() => _settings = s.copyWith(rosterSize: v))),
+              _stepper('Pause after N losses', 'Consecutive live losses before benching',
+                  s.losingStreakThreshold, 1, 20,
+                  (v) => setState(() => _settings = s.copyWith(losingStreakThreshold: v))),
+              _stepper('Max per strategy', '0 = no limit', s.maxPerStrategy, 0, 20,
+                  (v) => setState(() => _settings = s.copyWith(maxPerStrategy: v))),
+              _stepper('Max per sector', '0 = no limit', s.maxPerSector, 0, 20,
+                  (v) => setState(() => _settings = s.copyWith(maxPerSector: v))),
+              _stepper('Review every N days', 'Auto re-scan cadence', s.reviewCadenceDays, 1, 60,
+                  (v) => setState(() => _settings = s.copyWith(reviewCadenceDays: v))),
+              _stepper('Release pause after N days', '0 = pauses never auto-release',
+                  s.pauseReleaseDays, 0, 60,
+                  (v) => setState(() => _settings = s.copyWith(pauseReleaseDays: v))),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _saving ? null : _save,
+                  child: Text(_saving ? 'Saving...' : 'Save settings'),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Per-account max-drawdown circuit breakers, and the manual re-arm.
+/// Deliberately never self-healing: once tripped an account stays halted even
+/// if equity recovers, until cleared here (or on the dashboard).
+class _AccountRiskSheet extends StatefulWidget {
+  const _AccountRiskSheet();
+
+  @override
+  State<_AccountRiskSheet> createState() => _AccountRiskSheetState();
+}
+
+class _AccountRiskSheetState extends State<_AccountRiskSheet> {
+  List<AccountRiskStatus>? _accounts;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final a = await AuthClient.fetchAccountRisk();
+      if (mounted) setState(() => _accounts = a);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  Future<void> _reset(AccountRiskStatus a) async {
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: 'Re-arm ${a.nickname}?',
+      message: 'Clears the drawdown breaker and re-baselines peak equity to this '
+          'account CURRENT equity, so it will not immediately re-trip against the old '
+          'high-water mark.\n\nThe account can open new positions again straight away.',
+      confirmLabel: 'Re-arm',
+      isDestructive: true,
+    );
+    if (password == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await AuthClient.resetAccountBreaker(accountId: a.accountId, password: password);
+      messenger.showSnackBar(SnackBar(content: Text('${a.nickname} re-armed.')));
+      await _load();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not re-arm: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accounts = _accounts;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: 16 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Account circuit breakers',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(
+              'An account that falls too far below its peak equity is halted from opening '
+              'new positions and stays halted until re-armed here.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 12),
+            if (_error != null)
+              Text(_error!, style: const TextStyle(color: Colors.red))
+            else if (accounts == null)
+              const Center(
+                  child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            else
+              ...accounts.map(
+                (a) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    a.blocked ? Icons.block : Icons.check_circle_outline,
+                    color: a.blocked ? Colors.red : Colors.green,
+                  ),
+                  title: Text('${a.nickname}${a.isPaper ? '' : '  (LIVE)'}'),
+                  subtitle: Text(
+                    a.blocked
+                        ? (a.reason ?? 'Halted.')
+                        : 'OK${a.peakEquity != null ? '  -  peak \$${a.peakEquity!.toStringAsFixed(2)}' : ''}',
+                    style: TextStyle(fontSize: 12, color: a.blocked ? Colors.red : Colors.grey[600]),
+                  ),
+                  trailing: a.blocked
+                      ? TextButton(onPressed: () => _reset(a), child: const Text('Re-arm'))
+                      : null,
+                ),
+              ),
           ],
         ),
       ),

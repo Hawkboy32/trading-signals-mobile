@@ -11,7 +11,9 @@ import 'positions_screen.dart';
 import 'roster_health_screen.dart';
 import 'settings_screen.dart';
 import 'signal_detail_screen.dart';
+import 'tax_screen.dart';
 import 'trade_history_screen.dart';
+import 'trading_hours_screen.dart';
 
 const _pollInterval = Duration(seconds: 60);
 
@@ -61,8 +63,19 @@ class _SignalListScreenState extends State<SignalListScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      // Shows the REAL exception when we have one (lastSignalsFetchError,
+      // set inside refreshWidget()'s own catch - see that file's doc
+      // comment) rather than always the same generic text regardless of
+      // cause - added 2026-08-24 after a real report where "Could not
+      // reach backend" turned out unhelpful for telling a genuine network
+      // failure apart from something else (e.g. a slow connection timing
+      // out, or a response the app failed to parse) that shows the exact
+      // same symptom to the user otherwise.
+      final detail = lastSignalsFetchError;
       setState(() {
-        _error = 'Could not reach backend - check Settings.';
+        _error = detail != null
+            ? 'Could not reach backend - check Settings.\n\n($detail)'
+            : 'Could not reach backend - check Settings.';
         _loading = false;
       });
     }
@@ -137,7 +150,29 @@ class _SignalListScreenState extends State<SignalListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Trading Signals'),
+        // Horizontally scrollable, not a plain actions list - 8 icons no
+        // longer fit AppBar's fixed-width actions row on a normal phone
+        // width (they were starting to run off-screen on the right).
+        // AppBar.actions itself doesn't scroll or wrap, so this wraps the
+        // whole icon row in its own SingleChildScrollView instead - same
+        // icons, same order, same behavior, just swipeable when they don't
+        // all fit.
+        //
+        // Real bug found on-device 2026-08-24: a bare SingleChildScrollView
+        // here didn't scroll at all - AppBar lays out actions in a Row with
+        // mainAxisSize.min (unconstrained/intrinsic width), so the scroll
+        // view never got a BOUNDED width to scroll within and just rendered
+        // at its full natural content width instead, identical to before.
+        // The SizedBox below gives it an explicit width so there's genuine
+        // overflow to scroll through - deliberately less than all 8 icons'
+        // combined width (~48dp each) so scrolling is actually exercised,
+        // not just theoretically wired up.
         actions: [
+          SizedBox(
+            width: 216,
+            child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
           IconButton(
             icon: _controlActionInFlight
                 ? const SizedBox(
@@ -158,7 +193,7 @@ class _SignalListScreenState extends State<SignalListScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.account_balance_wallet),
-            tooltip: 'Open positions',
+            tooltip: 'Account details',
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const PositionsScreen()),
@@ -184,6 +219,24 @@ class _SignalListScreenState extends State<SignalListScreen> {
             },
           ),
           IconButton(
+            icon: const Icon(Icons.schedule),
+            tooltip: 'Trading hours',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const TradingHoursScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.receipt_long),
+            tooltip: 'Tax (GBP estimate)',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const TaxScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.tune),
             tooltip: 'Bot control',
             onPressed: () async {
@@ -201,6 +254,9 @@ class _SignalListScreenState extends State<SignalListScreen> {
               ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
               _refresh();
             },
+          ),
+            ]),
+            ),
           ),
         ],
       ),

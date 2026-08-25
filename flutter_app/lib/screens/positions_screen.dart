@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/deposit.dart';
 import '../models/position.dart';
 import '../services/auth_client.dart';
+import '../widgets/collapsible_card.dart';
 import '../widgets/password_confirm_dialog.dart';
+import 'account_detail_screen.dart';
 import 'login_screen.dart';
 
 /// Live open positions + unrealized P&L, per linked account - the first
@@ -30,6 +32,19 @@ class _PositionsScreenState extends State<PositionsScreen> {
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  Future<void> _openAccountDetail(AccountPositions account) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AccountDetailScreen(
+          accountId: account.accountId,
+          nickname: account.nickname,
+        ),
+      ),
+    );
+    // A position may have been closed from the detail screen.
+    await _refresh();
   }
 
   Future<void> _refresh() async {
@@ -96,7 +111,7 @@ class _PositionsScreenState extends State<PositionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Open Positions')),
+      appBar: AppBar(title: const Text('Account Details')),
       body: RefreshIndicator(onRefresh: _refresh, child: _buildBody()),
     );
   }
@@ -128,27 +143,72 @@ class _PositionsScreenState extends State<PositionsScreen> {
         ],
       );
     }
-    return ListView.builder(
+    final liveAccounts = accounts.where((a) => !a.isPaper).toList();
+    final paperAccounts = accounts.where((a) => a.isPaper).toList();
+
+    Widget accountCard(AccountPositions account) => _AccountCard(
+          account: account,
+          deposits: _depositsByAccountId[account.accountId],
+          onTapDeposits: () => _openDeposits(account),
+          onClosed: _refresh,
+          onTapAccount: () => _openAccountDetail(account),
+        );
+
+    return ListView(
       padding: EdgeInsets.fromLTRB(8, 8, 8, 24 + MediaQuery.of(context).padding.bottom),
-      itemCount: accounts.length,
-      itemBuilder: (context, i) => _AccountCard(
-        account: accounts[i],
-        deposits: _depositsByAccountId[accounts[i].accountId],
-        onTapDeposits: () => _openDeposits(accounts[i]),
-      ),
+      children: [
+        if (liveAccounts.isNotEmpty)
+          CollapsibleCard(
+            title: const Text('Live (real money)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red)),
+            trailing: Text('${liveAccounts.length}', style: TextStyle(color: Colors.grey[600])),
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+            children: liveAccounts.map(accountCard).toList(),
+          ),
+        if (paperAccounts.isNotEmpty)
+          CollapsibleCard(
+            title: const Text('Paper', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            trailing: Text('${paperAccounts.length}', style: TextStyle(color: Colors.grey[600])),
+            // Paper accounts aren't real money - collapsed by default so the
+            // screen opens focused on what actually matters, live accounts.
+            initiallyExpanded: false,
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+            children: paperAccounts.map(accountCard).toList(),
+          ),
+      ],
     );
   }
 }
 
-class _AccountCard extends StatelessWidget {
+class _AccountCard extends StatefulWidget {
   final AccountPositions account;
   final AccountDeposits? deposits;
   final VoidCallback onTapDeposits;
 
-  const _AccountCard({required this.account, required this.deposits, required this.onTapDeposits});
+  final Future<void> Function() onClosed;
+  final VoidCallback onTapAccount;
+
+  const _AccountCard({
+    required this.account,
+    required this.deposits,
+    required this.onTapDeposits,
+    required this.onClosed,
+    required this.onTapAccount,
+  });
+
+  @override
+  State<_AccountCard> createState() => _AccountCardState();
+}
+
+class _AccountCardState extends State<_AccountCard> {
+  // Expanded by default - collapsing is purely additive, doesn't change the
+  // layout anyone's already used to until they actually tap the chevron.
+  bool _expanded = true;
 
   @override
   Widget build(BuildContext context) {
+    final account = widget.account;
+    final deposits = widget.deposits;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Padding(
@@ -156,37 +216,78 @@ class _AccountCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    account.nickname,
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            // The whole header is the tap target for the full account view -
+            // balances, all three P&L figures, and closed positions. The
+            // collapse chevron is a separate tap target (below), so it
+            // doesn't fight this one for taps.
+            InkWell(
+              onTap: widget.onTapAccount,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      account.nickname,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
-                Text(
-                  account.isPaper ? 'Paper' : 'LIVE',
-                  style: TextStyle(
-                    color: account.isPaper ? Colors.grey[600] : Colors.red,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+                  Text(
+                    account.isPaper ? 'Paper' : 'LIVE',
+                    style: TextStyle(
+                      color: account.isPaper ? Colors.grey[600] : Colors.red,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
-            ),
-            if (account.equity != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  'Equity \$${account.equity!.toStringAsFixed(2)}'
-                  '${account.cash != null ? '  ·  Cash \$${account.cash!.toStringAsFixed(2)}' : ''}',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                ),
+                  Icon(Icons.chevron_right, size: 20, color: Theme.of(context).colorScheme.primary),
+                ],
               ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (account.equity != null)
+                          Text(
+                            'Equity \$${account.equity!.toStringAsFixed(2)}'
+                            '${account.cash != null ? '  ·  Cash \$${account.cash!.toStringAsFixed(2)}' : ''}',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                          ),
+                        if (account.realizedPnlToday != null)
+                          Text(
+                            'Today (realised) '
+                            '${account.realizedPnlToday! >= 0 ? '+' : '-'}'
+                            '\$${account.realizedPnlToday!.abs().toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: account.realizedPnlToday! >= 0 ? Colors.green : Colors.red,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () => setState(() => _expanded = !_expanded),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: AnimatedRotation(
+                        turns: _expanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: Icon(Icons.expand_more, size: 20, color: Colors.grey[500]),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: InkWell(
-                onTap: onTapDeposits,
+                onTap: widget.onTapDeposits,
                 child: Row(
                   children: [
                     Icon(Icons.savings_outlined, size: 15, color: Colors.grey[600]),
@@ -194,8 +295,8 @@ class _AccountCard extends StatelessWidget {
                     Text(
                       deposits == null
                           ? 'Deposits'
-                          : 'Deposited \$${deposits!.totalDeposited.toStringAsFixed(2)}'
-                              '${deposits!.truePnl != null ? '  ·  True P&L ${deposits!.truePnl! >= 0 ? '+' : ''}\$${deposits!.truePnl!.toStringAsFixed(2)}' : ''}',
+                          : 'Deposited \$${deposits.totalDeposited.toStringAsFixed(2)}'
+                              '${deposits.truePnl != null ? '  ·  True P&L ${deposits.truePnl! >= 0 ? '+' : ''}\$${deposits.truePnl!.toStringAsFixed(2)}' : ''}',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.primary,
                         fontSize: 12,
@@ -207,16 +308,30 @@ class _AccountCard extends StatelessWidget {
                 ),
               ),
             ),
-            if (account.error != null) ...[
-              const SizedBox(height: 8),
-              Text(account.error!, style: const TextStyle(color: Colors.orange, fontSize: 12)),
-            ] else if (account.positions.isEmpty) ...[
-              const SizedBox(height: 8),
-              Text('Flat - no open positions.', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
-            ] else ...[
-              const Divider(height: 20),
-              ...account.positions.map((p) => _PositionRow(position: p)),
-            ],
+            AnimatedCrossFade(
+              firstChild: const SizedBox(width: double.infinity, height: 0),
+              secondChild: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (account.error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(account.error!, style: const TextStyle(color: Colors.orange, fontSize: 12)),
+                  ] else if (account.positions.isEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('Flat - no open positions.',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+                  ] else ...[
+                    const Divider(height: 20),
+                    ...account.positions.map(
+                      (p) => _PositionRow(position: p, account: account, onClosed: widget.onClosed),
+                    ),
+                  ],
+                ],
+              ),
+              crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 200),
+              sizeCurve: Curves.easeInOut,
+            ),
           ],
         ),
       ),
@@ -226,34 +341,116 @@ class _AccountCard extends StatelessWidget {
 
 class _PositionRow extends StatelessWidget {
   final OpenPosition position;
+  final AccountPositions account;
+  final Future<void> Function() onClosed;
 
-  const _PositionRow({required this.position});
+  const _PositionRow({
+    required this.position,
+    required this.account,
+    required this.onClosed,
+  });
+
+  /// Manual exit, password-confirmed like every other write in this app.
+  /// The message names the account AND whether it's real money, because the
+  /// nicknames don't reliably say ("MyAlpaca" is paper, "AlpacaLive" is live)
+  /// and this spends real money on a live account. Closing only ever reduces
+  /// exposure - there is deliberately no "open" counterpart on mobile.
+  Future<void> _confirmAndClose(BuildContext context) async {
+    final mode = account.isPaper ? 'paper' : 'REAL MONEY';
+    final pl = position.unrealizedPl;
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: 'Close ${position.ticker}?',
+      message: 'Market-close ${position.qty.toStringAsFixed(4)} ${position.ticker} on '
+          '${account.nickname} ($mode).\n\n'
+          'Unrealised now: ${pl >= 0 ? '+' : '-'}\$${pl.abs().toStringAsFixed(2)}\n'
+          'If the market is shut, the order queues until it next opens.',
+      confirmLabel: 'Close position',
+      isDestructive: true,
+    );
+    if (password == null || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final res = await AuthClient.closePosition(
+        accountId: account.accountId,
+        ticker: position.ticker,
+        password: password,
+      );
+      messenger.showSnackBar(SnackBar(
+        content: Text(
+          res['queued'] == true
+              ? '${position.ticker}: order queued for the next market open.'
+              : '${position.ticker} closed.',
+        ),
+      ));
+      await onClosed();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not close ${position.ticker}: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final isWin = position.unrealizedPl >= 0;
     final color = isWin ? Colors.green : Colors.red;
     final sign = isWin ? '+' : '-';
+    final sizingLabel = position.sizingLabel;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 2,
-            child: Text(
-              '${position.ticker} · ${position.side}',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  '${position.ticker} · ${position.side}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  '${position.qty.toStringAsFixed(4)} @ ${position.avgEntryPrice.toStringAsFixed(4)}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ),
+              Text(
+                '$sign\$${position.unrealizedPl.abs().toStringAsFixed(2)}',
+                style: TextStyle(color: color, fontWeight: FontWeight.bold),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Close ${position.ticker}',
+                visualDensity: VisualDensity.compact,
+                color: Colors.red[300],
+                onPressed: () => _confirmAndClose(context),
+              ),
+            ],
           ),
-          Expanded(
-            child: Text(
-              '${position.qty.toStringAsFixed(4)} @ ${position.avgEntryPrice.toStringAsFixed(4)}',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          // Sizing at entry - what % of equity (or $) this specific position
+          // was actually opened at, not today's global setting. Only shown
+          // when known: a position opened before this was added, or opened
+          // manually outside auto_trader.py, has no attribution to show.
+          Padding(
+            padding: const EdgeInsets.only(left: 2, top: 1),
+            child: Row(
+              children: [
+                Icon(Icons.straighten, size: 11, color: Colors.grey[500]),
+                const SizedBox(width: 3),
+                Text(
+                  sizingLabel == null
+                      ? 'Sizing unknown (opened before tracking, or manually)'
+                      : position.dollarsCommitted == null
+                          ? 'Sized at $sizingLabel'
+                          : 'Sized at $sizingLabel (\$${position.dollarsCommitted!.toStringAsFixed(2)})',
+                  style: TextStyle(fontSize: 10.5, color: Colors.grey[500], fontStyle: FontStyle.italic),
+                ),
+              ],
             ),
-          ),
-          Text(
-            '$sign\$${position.unrealizedPl.abs().toStringAsFixed(2)}',
-            style: TextStyle(color: color, fontWeight: FontWeight.bold),
           ),
         ],
       ),
