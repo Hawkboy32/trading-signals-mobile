@@ -729,6 +729,15 @@ def respond_to_roster_recommendation(
 
     if req.action == "apply":
         save_roster(pending.proposed_state)
+        # Replay the audit events evaluate_roster's dry-run preview computed
+        # but couldn't log yet (nobody had approved anything at preview
+        # time) - added 2026-08-28 after a real gap: applying used to
+        # persist real state changes (promoted_at, status, etc.) with NO
+        # corresponding roster_events.jsonl entry, confirmed live on PSKY's
+        # own 2026-08-13 re-promotion. See PendingRecommendation.events and
+        # evaluate_roster's events_out docstring.
+        for ticker, strategy_name, action, reason in pending.events:
+            append_event(ticker, strategy_name, action, reason)
     clear_pending()
     return {"ok": True, "action": req.action}
 
