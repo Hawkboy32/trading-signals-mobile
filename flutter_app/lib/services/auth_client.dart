@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/account_detail.dart';
 import '../models/account_sizing.dart';
+import '../models/advisor_report.dart';
 import '../models/deposit.dart';
 import '../models/position.dart';
 import '../models/risk_control.dart';
@@ -395,6 +396,30 @@ class AuthClient {
     return rec == null ? null : RosterRecommendation.fromJson(rec);
   }
 
+  /// Fetches a fresh Claude advisory report - a real API call the backend
+  /// makes on every request (see backend/advisor_service.py), not a cached
+  /// value, so this is deliberately only called when the user asks for it
+  /// (an "Ask advisor" button), never on screen load. A longer timeout than
+  /// the other GETs here since it involves an LLM call, not a local file read.
+  static Future<AdvisorReport> fetchAdvisorReport() async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .get(Uri.parse('$base/advisor'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 45));
+    if (resp.statusCode == 401) {
+      await logout();
+      throw AuthException(_extractError(resp, 'Session expired - log in again.'));
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Advisor request failed.'));
+    }
+    return AdvisorReport.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
   /// Approve ("apply") or reject ("dismiss") the pending roster
   /// recommendation - same password-confirmation friction as setRiskPreset,
   /// since applying changes what the live bot trades.
@@ -479,6 +504,48 @@ class AuthClient {
             'amount': amount,
             'date': date,
             'note': note,
+            'password': password,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 401) {
+      final detail = _extractError(resp, 'Not authorized.');
+      if (detail.toLowerCase().contains('session')) {
+        await logout();
+      }
+      throw AuthException(detail);
+    }
+    if (resp.statusCode != 200) {
+      throw AuthException(_extractError(resp, 'Request failed.'));
+    }
+  }
+
+  /// Attaches a REAL currency-conversion result to whichever deposits on
+  /// this account are still awaiting one - see backend deposits.py's
+  /// record_conversion for why this doesn't need (and can't cleanly have) a
+  /// 1:1 deposit-to-conversion mapping: several small foreign-currency
+  /// deposits often sit unconverted and get bulk-converted together. Same
+  /// password-confirmation as addDeposit.
+  static Future<void> recordConversion({
+    required String accountId,
+    required double convertedTotal,
+    required String password,
+  }) async {
+    final token = await getToken();
+    if (token == null) {
+      throw AuthException('Not logged in.');
+    }
+    final base = await ApiClient.getBackendUrl();
+    final resp = await http
+        .post(
+          Uri.parse('$base/deposits/convert'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'account_id': accountId,
+            'converted_total': convertedTotal,
             'password': password,
           }),
         )

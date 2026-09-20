@@ -473,6 +473,7 @@ class _DepositsSheet extends StatefulWidget {
 class _DepositsSheetState extends State<_DepositsSheet> {
   final _amountController = TextEditingController();
   final _noteController = TextEditingController();
+  final _conversionController = TextEditingController();
   DateTime _date = DateTime.now();
   bool _actionInFlight = false;
 
@@ -480,6 +481,7 @@ class _DepositsSheetState extends State<_DepositsSheet> {
   void dispose() {
     _amountController.dispose();
     _noteController.dispose();
+    _conversionController.dispose();
     super.dispose();
   }
 
@@ -512,6 +514,45 @@ class _DepositsSheetState extends State<_DepositsSheet> {
       if (!mounted) return;
       _amountController.clear();
       _noteController.clear();
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _actionInFlight = false);
+    }
+  }
+
+  Future<void> _recordConversion() async {
+    final total = double.tryParse(_conversionController.text);
+    if (total == null || total <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid converted amount.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    final password = await showPasswordConfirmDialog(
+      context: context,
+      title: 'Record conversion?',
+      message: 'Attaches the real converted amount (\$${total.toStringAsFixed(2)}) to whichever '
+          '${widget.account.nickname} deposits are still awaiting one. If several deposits sat '
+          'unconverted, this splits across all of them proportionally - it does not need to '
+          'match a single deposit.',
+      confirmLabel: 'Record',
+    );
+    if (password == null || !mounted) return;
+
+    setState(() => _actionInFlight = true);
+    try {
+      await AuthClient.recordConversion(
+        accountId: widget.account.accountId,
+        convertedTotal: total,
+        password: password,
+      );
+      if (!mounted) return;
+      _conversionController.clear();
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -567,20 +608,40 @@ class _DepositsSheetState extends State<_DepositsSheet> {
               'Total deposited: \$${(widget.deposits?.totalDeposited ?? 0).toStringAsFixed(2)}',
               style: TextStyle(color: Colors.grey[600]),
             ),
+            // Only shown once it actually differs - i.e. at least one
+            // foreign-currency deposit's real conversion has been recorded.
+            // Otherwise this is just noise repeating the line above.
+            if (((widget.deposits?.totalDepositedEstimated ?? 0) - (widget.deposits?.totalDeposited ?? 0)).abs() > 0.005)
+              Text(
+                'Estimated at deposit time: \$${(widget.deposits?.totalDepositedEstimated ?? 0).toStringAsFixed(2)}',
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              ),
             const Divider(height: 24),
             if (entries.isEmpty)
               Text('No deposits recorded yet.', style: TextStyle(color: Colors.grey[500]))
             else
               ...entries.asMap().entries.map((e) {
                 final entry = e.value;
+                final converted = entry.convertedAmount;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          '${entry.date}: \$${entry.amount.toStringAsFixed(2)}'
-                          '${entry.note.isNotEmpty ? ' - ${entry.note}' : ''}',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${entry.date}: \$${entry.amount.toStringAsFixed(2)}'
+                              '${entry.note.isNotEmpty ? ' - ${entry.note}' : ''}',
+                            ),
+                            if (converted != null)
+                              Text(
+                                'converted: \$${converted.toStringAsFixed(2)}'
+                                '${entry.convertedAt != null && entry.convertedAt!.length >= 10 ? ' (${entry.convertedAt!.substring(0, 10)})' : ''}',
+                                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                              ),
+                          ],
                         ),
                       ),
                       IconButton(
@@ -591,6 +652,34 @@ class _DepositsSheetState extends State<_DepositsSheet> {
                   ),
                 );
               }),
+            if (entries.any((e) => e.convertedAmount == null) && entries.isNotEmpty) ...[
+              const Divider(height: 24),
+              Text('Record a conversion', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Text(
+                'Once a deposit above actually gets converted (e.g. GBP to USD on the '
+                "exchange), enter what it really banked - splits across whichever entries "
+                "are still awaiting one.",
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _conversionController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Real converted amount (\$)', border: OutlineInputBorder()),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: _actionInFlight ? null : _recordConversion,
+                    child: const Text('Record'),
+                  ),
+                ],
+              ),
+            ],
             const Divider(height: 24),
             Text('Record a deposit', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),

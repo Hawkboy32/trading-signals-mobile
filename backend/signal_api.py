@@ -24,12 +24,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import _auth
+import advisor_service
 from backtester import account_risk, execution_log, notifications, position_attribution, source_stamp, version
 from backtester.accounts import build_broker_accounts, list_accounts
 from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.brokers.base import OrderSide, summarize_fees
 from backtester.data import PolygonClient
-from backtester.deposits import deposits_for, record_deposit, remove_deposit, total_deposited
+from backtester.deposits import (
+    deposits_for, record_conversion, record_deposit, remove_deposit, total_deposited, total_deposited_estimated,
+)
 from backtester.execution import sliding_pct_equity
 from backtester.live_trades import (
     UNATTRIBUTED_STRATEGY, list_recent_trades, recent_performance, record_realized_trade,
@@ -238,7 +241,7 @@ def download_apk():
     if not _APK_PATH.exists():
         raise HTTPException(status_code=404, detail="No release APK built yet.")
     return FileResponse(
-        _APK_PATH, media_type="application/vnd.android.package-archive", filename="trading-signals.apk"
+        _APK_PATH, media_type="application/vnd.android.package-archive", filename="chopper.apk"
     )
 
 
@@ -742,6 +745,22 @@ def respond_to_roster_recommendation(
     return {"ok": True, "action": req.action}
 
 
+@app.get("/advisor")
+def advisor(username: str = Depends(_require_session)) -> dict:
+    """On-demand Claude second-opinion synthesis of current roster health,
+    positions, and any pending roster recommendation - see
+    advisor_service.py's own docstring for why this is read-only/advisory
+    only and will never be wired into execution. Calls the Claude API fresh
+    on every request (2026-09-18 decision: on-demand only, no background
+    cache like /signals has) - a real, billed API call each time this is
+    opened, not a free local read like /roster."""
+    try:
+        report = advisor_service.generate_advice()
+    except advisor_service.AdvisorError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return report.model_dump()
+
+
 @app.get("/deposits")
 def deposits(username: str = Depends(_require_session)) -> dict:
     """Per-account deposit log + True P&L (equity minus total deposited) -
@@ -753,6 +772,7 @@ def deposits(username: str = Depends(_require_session)) -> dict:
     for account in list_accounts():
         account_id = account["id"]
         deposited = total_deposited(account_id)
+        deposited_estimated = total_deposited_estimated(account_id)
         equity = equity_by_id.get(account_id)
         rows.append({
             "account_id": account_id,
@@ -761,9 +781,17 @@ def deposits(username: str = Depends(_require_session)) -> dict:
             "is_paper": account["is_paper"],
             "equity": equity,
             "total_deposited": deposited,
+            # Only meaningfully different from total_deposited once a
+            # foreign-currency deposit's real conversion has been recorded
+            # (see record_conversion) - identical to total_deposited until
+            # then, so this is safe to always include.
+            "total_deposited_estimated": deposited_estimated,
             "true_pnl": (equity - deposited) if equity is not None else None,
             "entries": [
-                {"amount": d.amount, "date": d.date, "note": d.note, "recorded_at": d.recorded_at}
+                {
+                    "amount": d.amount, "date": d.date, "note": d.note, "recorded_at": d.recorded_at,
+                    "converted_amount": d.converted_amount, "converted_at": d.converted_at,
+                }
                 for d in deposits_for(account_id)
             ],
         })
@@ -803,6 +831,32 @@ def remove_deposit_endpoint(req: RemoveDepositRequest, username: str = Depends(_
     if not _auth.verify_password(username, req.password):
         raise HTTPException(status_code=401, detail="Incorrect password.")
     remove_deposit(req.account_id, req.index)
+    return {"ok": True, "total_deposited": total_deposited(req.account_id)}
+
+
+class RecordConversionRequest(BaseModel):
+    account_id: str
+    converted_total: float  # the REAL amount a currency conversion actually banked
+    converted_at: str = ""  # ISO timestamp; blank = now
+    password: str
+
+
+@app.post("/deposits/convert")
+def record_conversion_endpoint(req: RecordConversionRequest, username: str = Depends(_require_session)) -> dict:
+    """Attaches a real currency-conversion result to whichever deposits for
+    this account are still awaiting one - see deposits.record_conversion's
+    own docstring for why this doesn't need (and can't cleanly have) a
+    1:1 deposit-to-conversion mapping. Use this the next time a
+    foreign-currency deposit actually gets converted, so total_deposited
+    (and True P&L) reflect the real banked amount instead of the live-equity
+    estimate logged at deposit time - and total_deposited_estimated stays
+    around to show the trend between the two."""
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    try:
+        record_conversion(req.account_id, req.converted_total, req.converted_at or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "total_deposited": total_deposited(req.account_id)}
 
 
@@ -956,6 +1010,13 @@ def account_detail(account_id: str, username: str = Depends(_require_session)) -
         "realized_pnl": realized,
         "realized_pnl_today": realized_today,
         "total_deposited": deposited,
+        # Only differs from total_deposited once a foreign-currency deposit's
+        # real conversion has been recorded (see deposits.record_conversion) -
+        # identical until then, so always safe to include. Kept alongside
+        # rather than replacing total_deposited so a trend (is the live-
+        # equity estimate at deposit time consistently over/understating
+        # what actually lands?) stays visible across future deposits.
+        "total_deposited_estimated": total_deposited_estimated(account_id),
         # None, not a number, in two cases where "equity minus deposits" would
         # be actively misleading rather than merely unknown:
         #   - broker unreachable: there's no real equity to subtract from

@@ -108,7 +108,12 @@ class _SignalDetailScreenState extends State<SignalDetailScreen> {
           continue; // a different strategy on this account may trade the same ticker
         }
         for (final position in account.positions) {
-          if (position.ticker == widget.signal.ticker) {
+          // avgEntryPrice == 0.0 means "unknown", not "entered at $0" - some
+          // brokers (Kraken) have no cost-basis field at all and always
+          // report 0.0 there (see kraken.py's get_positions() docstring).
+          // Drawing that as a real entry line would both mislabel it and
+          // wreck the chart's y-axis autoscale below by dragging minY to 0.
+          if (position.ticker == widget.signal.ticker && position.avgEntryPrice > 0) {
             lines.add(
               _LevelLine(
                 // "LIVE" spelled out, not left to the nickname: the real

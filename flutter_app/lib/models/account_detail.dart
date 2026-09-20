@@ -66,6 +66,12 @@ class AccountDetail {
   // for why (most brokers here have no equity-history API to diff against).
   final double realizedPnlToday;
   final double totalDeposited;
+  // The original logged total before any real currency-conversion result
+  // was recorded against a deposit - see deposits.record_conversion. Equal
+  // to totalDeposited until then; kept separately so a trend across future
+  // deposits (does the live-equity estimate run high/low vs what actually
+  // lands?) stays visible instead of being silently overwritten.
+  final double totalDepositedEstimated;
   final double? truePnl;
 
   final List<OpenPosition> openPositions;
@@ -109,6 +115,7 @@ class AccountDetail {
     required this.realizedPnl,
     required this.realizedPnlToday,
     required this.totalDeposited,
+    required this.totalDepositedEstimated,
     required this.truePnl,
     required this.openPositions,
     required this.closedTrades,
@@ -122,6 +129,7 @@ class AccountDetail {
   });
 
   factory AccountDetail.fromJson(Map<String, dynamic> json) {
+    final totalDeposited = (json['total_deposited'] as num?)?.toDouble() ?? 0.0;
     return AccountDetail(
       accountId: json['account_id'] as String? ?? '',
       nickname: json['nickname'] as String? ?? '',
@@ -134,7 +142,9 @@ class AccountDetail {
       unrealizedPnl: (json['unrealized_pnl'] as num?)?.toDouble() ?? 0.0,
       realizedPnl: (json['realized_pnl'] as num?)?.toDouble() ?? 0.0,
       realizedPnlToday: (json['realized_pnl_today'] as num?)?.toDouble() ?? 0.0,
-      totalDeposited: (json['total_deposited'] as num?)?.toDouble() ?? 0.0,
+      totalDeposited: totalDeposited,
+      totalDepositedEstimated:
+          (json['total_deposited_estimated'] as num?)?.toDouble() ?? totalDeposited,
       truePnl: (json['true_pnl'] as num?)?.toDouble(),
       openPositions: (json['open_positions'] as List<dynamic>? ?? [])
           .map((e) => OpenPosition.fromJson(e as Map<String, dynamic>))

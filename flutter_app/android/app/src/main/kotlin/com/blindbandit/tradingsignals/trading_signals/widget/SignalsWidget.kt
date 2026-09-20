@@ -103,6 +103,67 @@ class SignalsWidget : GlanceAppWidget() {
         Box(modifier = GlanceModifier.width(sizeDp).height(sizeDp).background(color)) {}
     }
 
+    // Same layered solid-Box-behind-inset-Box technique this file already
+    // uses for the widget's own 1dp outer frame (see WidgetContent's root
+    // Column comment) - Glance has no border() or box-shadow, so a "lit"
+    // square is a colored border with a translucent fill, and an "off"
+    // square is a dim border over the plain background. Mirrors the
+    // console-grid look added to the dashboard/app.py the same day.
+    // Sized up from the first pass (9dp, no label) per direct feedback on a
+    // real device - label sits below the cell in its own Column so the two
+    // stay vertically stacked without needing a Glance alignment API this
+    // project hasn't already proven out.
+    @Composable
+    private fun ConsoleCell(color: Color, lit: Boolean, label: String) {
+        Column {
+            Box(
+                modifier = GlanceModifier
+                    .width(16.dp).height(16.dp)
+                    .background(if (lit) color else COL_DIMMER)
+                    .padding(2.dp),
+            ) {
+                Box(
+                    modifier = GlanceModifier.fillMaxSize()
+                        .background(if (lit) color.copy(alpha = 0.35f) else COL_BG),
+                ) {}
+            }
+            Text(
+                text = label,
+                style = TextStyle(color = solidColor(COL_DIM), fontSize = 8.sp),
+            )
+        }
+    }
+
+    // One glanceable row surfacing real bot/market/roster/position status as
+    // a small square grid - shown at EVERY size tier (unlike the roster row,
+    // hours line, and P&L box below, which are isLarge/showExtras-only), to
+    // put real information in the SMALL tier's mostly-empty space instead of
+    // just a header and one signal row. Every cell reads state already
+    // parsed above - nothing here is invented to fill space.
+    @Composable
+    private fun StatusGrid(
+        botKilled: Boolean,
+        marketOpen: Boolean,
+        rosterActive: Int,
+        rosterSize: Int,
+        rosterPaused: String,
+        hasOpenPositions: Boolean,
+    ) {
+        Row(modifier = GlanceModifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)) {
+            ConsoleCell(if (botKilled) COL_DANGER else COL_SUCCESS, lit = true, label = "BOT")
+            Box(modifier = GlanceModifier.width(10.dp)) {}
+            ConsoleCell(COL_SUCCESS, lit = marketOpen, label = "MKT")
+            Box(modifier = GlanceModifier.width(10.dp)) {}
+            ConsoleCell(
+                if (rosterPaused.isNotEmpty()) COL_GOLD else COL_SUCCESS,
+                lit = rosterSize > 0 && rosterActive > 0,
+                label = "ROSTER",
+            )
+            Box(modifier = GlanceModifier.width(10.dp)) {}
+            ConsoleCell(COL_GOLD, lit = hasOpenPositions, label = "POS")
+        }
+    }
+
     @Composable
     private fun Divider() {
         Box(
@@ -205,6 +266,14 @@ class SignalsWidget : GlanceAppWidget() {
                         )
                     }
                 }
+                StatusGrid(
+                    botKilled = botKilled,
+                    marketOpen = marketOpen,
+                    rosterActive = rosterActive,
+                    rosterSize = rosterSize,
+                    rosterPaused = rosterPaused,
+                    hasOpenPositions = positionsAvailable && openCount > 0,
+                )
                 // Today's actual open/close digits, same schedule the
                 // Trading Hours screen shows (2026-08-23) - only at the
                 // LARGE tier, same as the OPEN/CLOSED pill above, since this
