@@ -43,3 +43,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Locally-installed agent skill tooling (fonts, vendored scripts, test
+# fixtures pulled from other GitHub repos) - local dev tooling, not project
+# code. Analogous to node_modules/.venv: reinstallable, shouldn't bloat this
+# repo's history with unrelated third-party content.
+.agents/
+skills-lock.json

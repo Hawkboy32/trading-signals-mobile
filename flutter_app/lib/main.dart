@@ -51,7 +51,7 @@ class TradingSignalsApp extends StatelessWidget {
     const hologramBlue = Color(0xFF3DC7F0);
     const warmGold = Color(0xFFE0A94A);
     return MaterialApp(
-      title: 'Trading Signals',
+      title: 'Chopper',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: hologramBlue,

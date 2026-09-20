@@ -199,6 +199,17 @@ class _AccountDetailScreenState extends State<AccountDetailScreen> {
         ],
         const Divider(),
         _row('Deposited', _money(d.totalDeposited), help: 'Money you put in (manually logged)'),
+        // Only shown once it actually differs from the line above - i.e. a
+        // foreign-currency deposit's real conversion has been recorded, see
+        // AuthClient.recordConversion. Otherwise it's identical noise.
+        if ((d.totalDepositedEstimated - d.totalDeposited).abs() > 0.005)
+          _row(
+            'Deposited (estimated at the time)',
+            Text('\$${d.totalDepositedEstimated.toStringAsFixed(2)}',
+                style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[600])),
+            help: 'What live equity showed when each deposit landed, before its real '
+                'conversion was known - kept to show the trend, not used for True P&L',
+          ),
         _row(
           'True P&L',
           d.truePnl == null

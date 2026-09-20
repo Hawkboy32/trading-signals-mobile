@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/advisor_report.dart';
 import '../models/roster.dart';
 import '../models/risk_control.dart';
 import '../models/roster_recommendation.dart';
@@ -129,12 +130,25 @@ class _RosterHealthScreenState extends State<RosterHealthScreen> {
     );
   }
 
+  Future<void> _openAdvisor() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _AdvisorSheet(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Roster Health'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.auto_awesome_outlined),
+            tooltip: 'Ask Claude advisor',
+            onPressed: _openAdvisor,
+          ),
           IconButton(
             icon: const Icon(Icons.health_and_safety_outlined),
             tooltip: 'Account risk / circuit breakers',
@@ -705,6 +719,136 @@ class _AccountRiskSheetState extends State<_AccountRiskSheet> {
                       : null,
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// On-demand Claude second opinion on current roster health/positions - see
+/// backend/advisor_service.py's own docstring for the full design reasoning.
+/// Fetches fresh on open (a real, billed API call - never cached, never
+/// auto-triggered elsewhere in this screen) with an explicit "Ask again"
+/// to re-run rather than any auto-refresh. Read-only: there is nothing here
+/// that changes the roster - unlike the recommendation banner above, this
+/// sheet has no Apply/Dismiss action, on purpose.
+class _AdvisorSheet extends StatefulWidget {
+  const _AdvisorSheet();
+
+  @override
+  State<_AdvisorSheet> createState() => _AdvisorSheetState();
+}
+
+class _AdvisorSheetState extends State<_AdvisorSheet> {
+  AdvisorReport? _report;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final report = await AuthClient.fetchAdvisorReport();
+      if (mounted) setState(() => _report = report);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Color _severityColor(String severity) => severity == 'warning' ? Colors.orange : Colors.grey[600]!;
+
+  IconData _severityIcon(String severity) =>
+      severity == 'warning' ? Icons.warning_amber_rounded : Icons.info_outline;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: 16 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.auto_awesome_outlined, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('Claude advisor', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'A second opinion, read-only - it never changes the roster or places a trade. '
+              'Each "Ask again" is a real API call.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 12),
+            if (_loading)
+              const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            else if (_error != null) ...[
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(onPressed: _load, child: const Text('Try again')),
+              ),
+            ] else if (_report != null) ...[
+              Text(_report!.summary, style: const TextStyle(fontSize: 14)),
+              if (_report!.flags.isEmpty) ...[
+                const SizedBox(height: 12),
+                Text('No flags raised.', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+              ] else ...[
+                const SizedBox(height: 12),
+                for (final flag in _report!.flags)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(_severityIcon(flag.severity), size: 18, color: _severityColor(flag.severity)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(flag.combo,
+                                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: _severityColor(flag.severity))),
+                              Text(flag.note, style: const TextStyle(fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Ask again'),
+                  onPressed: _load,
+                ),
+              ),
+            ],
           ],
         ),
       ),

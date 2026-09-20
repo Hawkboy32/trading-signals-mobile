@@ -149,7 +149,7 @@ class _SignalListScreenState extends State<SignalListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Trading Signals'),
+        title: const Text('Chopper'),
         // Horizontally scrollable, not a plain actions list - 8 icons no
         // longer fit AppBar's fixed-width actions row on a normal phone
         // width (they were starting to run off-screen on the right).
