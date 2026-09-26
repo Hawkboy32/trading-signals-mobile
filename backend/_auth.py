@@ -52,12 +52,12 @@ def _normalize_username(username: str) -> str:
     string it's given), is ALWAYS this normalized form, regardless of the
     case a user originally registered with in auth_config.yaml. A real bug
     found live 2026-08-08: auth_config.yaml's stored key was '[redacted-dashboard-username]'
-    (mixed case), the dashboard's own login normalized it to 'hawkboy32'
+    (mixed case), the dashboard's own login normalized it to '[redacted-dashboard-username-lower]'
     for 2FA enrollment, but this module's password check did an exact-case
     dict lookup - a mobile login typed as '[redacted-dashboard-username]' passed the password
     check against the real config key, then failed the 2FA check because it
     was looking for a '[redacted-dashboard-username]' enrollment that was actually stored under
-    'hawkboy32'. Every identity-bearing operation below now normalizes
+    '[redacted-dashboard-username-lower]'. Every identity-bearing operation below now normalizes
     first, so mobile and dashboard always agree on who "the same user" is."""
     return username.lower().strip()
 
