@@ -97,12 +97,56 @@ _cache: dict[str, object] = {"signals": [], "last_refreshed": None, "last_error"
 _cache_lock = threading.Lock()
 
 
+# Used ONLY to compute a signal to DISPLAY for a held ticker that isn't
+# covered by the roster or a manual extra_targets group (see
+# _held_position_combos below) - never used to size or place a real order.
+# VWAP Mean Reversion because it's already this project's single most
+# broadly-deployed strategy (live on BTC, several roster tickers) - picked
+# for consistency, not because it's been validated on any specific ticker
+# this ends up applying to.
+DEFAULT_POSITION_STRATEGY = "VWAP Mean Reversion"
+
+
+def _held_position_combos(already_covered: set[str]) -> list[tuple[str, str, dict]]:
+    """One combo per ticker with a real open position that ISN'T already
+    covered by the roster/extra_targets - so a held ticker always has SOME
+    live buy/sell/hold reading, regardless of whether it's a roster-scanned
+    equity, a copy-traded one-off, or anything else a position can come from.
+
+    Display-only by construction: this only ever feeds _current_combos(),
+    which only ever feeds compute_current_signal() for the READ-ONLY
+    /signals feed - it's never consulted by auto_trader.py's own target list
+    (see auto_trader.py's _effective_targets, which reads roster.json/
+    control.json directly, not this API's signal cache), so nothing here
+    can cause Chopper to open, size, or manage a real order. A best-effort
+    read: fetch_all_positions() failing (a broker hiccup) just means no
+    positions get this treatment for one cycle, not a failed refresh.
+    """
+    try:
+        accounts = fetch_all_positions()
+    except Exception:  # noqa: BLE001
+        return []
+    tickers = {
+        p["ticker"]
+        for account in accounts
+        if not account.get("error")
+        for p in account.get("positions", [])
+    }
+    return [
+        (ticker, DEFAULT_POSITION_STRATEGY, {})
+        for ticker in sorted(tickers - already_covered)
+    ]
+
+
 def _current_combos() -> list[tuple[str, str, dict]]:
     """(ticker, strategy_name, params) for everything the live bot is
     configured to trade right now - the roster's active/paused entries plus
-    every extra_targets group's tickers. Re-read fresh each refresh cycle so
-    a roster re-evaluation or a new extra_targets config is picked up
-    automatically, no separate watchlist to maintain."""
+    every extra_targets group's tickers - PLUS a display-only combo for any
+    held ticker neither of those covers (see _held_position_combos). Re-read
+    fresh each refresh cycle so a roster re-evaluation, a new extra_targets
+    config, or a newly opened/closed position is picked up automatically -
+    no separate watchlist to maintain, and nothing to clean up when a
+    position closes."""
     combos: list[tuple[str, str, dict]] = []
 
     roster = load_roster()
@@ -116,6 +160,9 @@ def _current_combos() -> list[tuple[str, str, dict]]:
         params = group.get("strategy_params", {})
         for ticker in group.get("tickers", []):
             combos.append((ticker, strategy_name, params))
+
+    already_covered = {ticker for ticker, _, _ in combos}
+    combos.extend(_held_position_combos(already_covered))
 
     return combos
 

@@ -854,6 +854,32 @@ work was stashed, survived the blindbandit rewrite above as a converted branch, 
 back into the working tree afterward (see that entry) - still uncommitted as of this note,
 pending review.
 
+=== 2026-09-28: Dynamic held-position signals - any position, always visible ===
+Follow-up to the "held ticker with no live signal" fix above. Tried getting the two copy-traded
+tickers (OKLO/PRCT) properly promoted into the backtester roster instead - ran into real
+capacity limits and a real evaluate_roster bug along the way (full story in ../backtester's own
+CLAUDE_NOTES.txt, same date - including a near-miss that made the roster LOOK completely wiped
+out when it wasn't). User's own proposal after seeing that fight: keep the roster exactly as-is
+(score-based, untouched), and make signal_api.py itself dynamically compute a display-only combo
+for ANY held ticker the roster/extra_targets don't cover - no manual list, no roster capacity
+involved, self-maintaining (a position closing just stops appearing next cycle, nothing to clean
+up).
+
+Implemented as `_held_position_combos()` in signal_api.py, called from `_current_combos()` after
+the existing roster+extra_targets combos are built, using VWAP Mean Reversion as a fixed default
+strategy (this project's most broadly-deployed one, not validated per-ticker - fine since this
+is display-only). Deliberately built to be IMPOSSIBLE to affect real trading: pulls from
+fetch_all_positions() (real broker reads, already cached 30s) but only ever feeds the read-only
+/signals response - auto_trader.py reads roster.json/control.json directly and has no path to
+this API's code at all, so nothing here can cause Chopper to open/size/manage a real order. A
+broker read failing degrades to "skip this cycle's position combos," never a failed refresh.
+
+Verified live: OKLO and PRCT (equities, copy-traded, not in any scan universe) now get a real
+computed hold/buy/sell reading with live pricing. X:BABYUSD (the Kraken dust from the earlier fix
+above) correctly degrades to "not enough bar history" rather than erroring - Polygon's data for
+an obscure token this thin is genuinely sparse, expected, not a bug. No Flutter changes needed
+for this one - purely backend, the already-installed app picks it up on its next refresh.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
 Claude's own auto-memory system (separate from this file) has the fuller session-by-session
 history of how this got built. This .txt is the lightweight, quick-orientation summary — see
