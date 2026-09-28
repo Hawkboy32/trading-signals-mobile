@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
+import '../models/position.dart';
 import '../models/signal.dart';
 import '../services/auth_client.dart';
 import '../services/widget_service.dart';
 import '../widgets/password_confirm_dialog.dart';
 import 'bot_control_screen.dart';
+import 'challenge_screen.dart';
 import 'login_screen.dart';
 import 'positions_screen.dart';
 import 'roster_health_screen.dart';
@@ -31,15 +33,18 @@ class _SignalListScreenState extends State<SignalListScreen> {
   Timer? _timer;
   Map<String, dynamic>? _controlState;
   bool _controlActionInFlight = false;
+  Map<String, _HeldPosition> _openPositions = {};
 
   @override
   void initState() {
     super.initState();
     _refresh();
     _refreshControlState();
+    _refreshPositionTickers();
     _timer = Timer.periodic(_pollInterval, (_) {
       _refresh();
       _refreshControlState();
+      _refreshPositionTickers();
     });
   }
 
@@ -85,6 +90,42 @@ class _SignalListScreenState extends State<SignalListScreen> {
     final state = await AuthClient.fetchControlState();
     if (!mounted || state == null) return;
     setState(() => _controlState = state);
+  }
+
+  /// Every currently open position, keyed by ticker, across every linked
+  /// account - so the list can float them to the top regardless of which
+  /// account holds them, AND show one even when there's no matching entry
+  /// in the live signals feed at all (a real gap found live: a position can
+  /// exist for a ticker the backend's _current_combos() doesn't cover, e.g.
+  /// a copy-traded ticker, or one demoted from the roster after the
+  /// position was opened - the ticker then never appears in /signals, so
+  /// reordering alone can't surface it; there's nothing to reorder). Held
+  /// in more than one account keeps the first found - a rare case, and this
+  /// screen only needs "you're holding this," not full per-account detail
+  /// (that's what the Positions screen is for).
+  ///
+  /// Login-gated (real broker data) and silent on failure, same reasoning
+  /// as _refreshRecommendation on the roster health screen: a not-logged-in
+  /// visitor just sees the normal list rather than being forced to log in.
+  Future<void> _refreshPositionTickers() async {
+    if (!await AuthClient.isLoggedIn()) return;
+    try {
+      final accounts = await AuthClient.fetchPositions();
+      if (!mounted) return;
+      final held = <String, _HeldPosition>{};
+      for (final account in accounts) {
+        for (final position in account.positions) {
+          held.putIfAbsent(
+            position.ticker,
+            () => _HeldPosition(accountNickname: account.nickname, position: position),
+          );
+        }
+      }
+      setState(() => _openPositions = held);
+    } catch (_) {
+      // Silent - same reasoning as the entry-price overlay on the signal
+      // detail chart: a nice-to-have, not core to this screen.
+    }
   }
 
   bool get _isArmed =>
@@ -164,7 +205,7 @@ class _SignalListScreenState extends State<SignalListScreen> {
         // view never got a BOUNDED width to scroll within and just rendered
         // at its full natural content width instead, identical to before.
         // The SizedBox below gives it an explicit width so there's genuine
-        // overflow to scroll through - deliberately less than all 8 icons'
+        // overflow to scroll through - deliberately less than all 9 icons'
         // combined width (~48dp each) so scrolling is actually exercised,
         // not just theoretically wired up.
         actions: [
@@ -215,6 +256,15 @@ class _SignalListScreenState extends State<SignalListScreen> {
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const RosterHealthScreen()),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.flag_circle),
+            tooltip: 'Challenges',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ChallengeScreen()),
               );
             },
           ),
@@ -281,7 +331,28 @@ class _SignalListScreenState extends State<SignalListScreen> {
       );
     }
     final signals = _data?.signals ?? [];
-    if (signals.isEmpty) {
+
+    // Anything with an open position floats to the very top, ahead of the
+    // Market Open/Closed/Unknown grouping below - the user asked for this
+    // specifically because some tickers were getting lost in the full scan
+    // list, when what actually needs eyes-on is whatever Chopper is already
+    // holding. Pulled out of `signals` entirely (not duplicated) so a held
+    // ticker only ever appears once, at the top.
+    final withPosition = signals.where((s) => _openPositions.containsKey(s.ticker)).toList();
+    final rest = signals.where((s) => !_openPositions.containsKey(s.ticker)).toList();
+
+    // A held ticker can have NO entry in `signals` at all - a real gap found
+    // live: the backend's live-signal feed only covers the roster's active/
+    // paused entries plus extra_targets, not every ticker with an open
+    // position (a copy-traded ticker, or one demoted from the roster after
+    // the position was opened, never shows up there). Reordering alone
+    // can't surface those - there's nothing in `signals` to reorder - so
+    // they get a lightweight card synthesized directly from the position
+    // data instead, still under the same "Open Position" header.
+    final signalTickers = signals.map((s) => s.ticker).toSet();
+    final positionOnly = _openPositions.entries.where((e) => !signalTickers.contains(e.key)).map((e) => e.value).toList();
+
+    if (signals.isEmpty && positionOnly.isEmpty) {
       return ListView(
         children: const [
           SizedBox(height: 80),
@@ -299,11 +370,14 @@ class _SignalListScreenState extends State<SignalListScreen> {
     // currently trades that ticker's asset class - rare, but shown rather
     // than silently dropped) - per the user's own framing: "top of the list
     // market open... below market closed".
-    final open = signals.where((s) => s.marketOpen == true).toList();
-    final closed = signals.where((s) => s.marketOpen == false).toList();
-    final unknown = signals.where((s) => s.marketOpen == null).toList();
+    final open = rest.where((s) => s.marketOpen == true).toList();
+    final closed = rest.where((s) => s.marketOpen == false).toList();
+    final unknown = rest.where((s) => s.marketOpen == null).toList();
 
     final items = <_ListItem>[
+      if (withPosition.isNotEmpty || positionOnly.isNotEmpty) _ListItem.header('Open Position'),
+      ...withPosition.map(_ListItem.signal),
+      ...positionOnly.map(_ListItem.positionOnly),
       if (open.isNotEmpty) _ListItem.header('Market Open'),
       ...open.map(_ListItem.signal),
       if (closed.isNotEmpty) _ListItem.header('Market Closed'),
@@ -344,23 +418,41 @@ class _SignalListScreenState extends State<SignalListScreen> {
             ),
           );
         }
+        if (item.positionOnly != null) {
+          return _PositionOnlyCard(held: item.positionOnly!);
+        }
         return _SignalCard(signal: item.signal!);
       },
     );
   }
 }
 
-/// Flat representation of the grouped list - either a section header or a
-/// signal card - so ListView.builder can walk one simple indexed list rather
-/// than juggling per-group index math directly in itemBuilder.
+/// One open position, plus which account holds it - carried through from
+/// AuthClient.fetchPositions() so a held ticker can float to the top of the
+/// list (and get a synthesized card when there's no live signal for it at
+/// all) without needing the full per-account detail the Positions screen
+/// already shows.
+class _HeldPosition {
+  final String accountNickname;
+  final OpenPosition position;
+
+  _HeldPosition({required this.accountNickname, required this.position});
+}
+
+/// Flat representation of the grouped list - a section header, a signal
+/// card, or a position-only card (no live signal exists for that ticker) -
+/// so ListView.builder can walk one simple indexed list rather than
+/// juggling per-group index math directly in itemBuilder.
 class _ListItem {
   final String? header;
   final TradingSignal? signal;
+  final _HeldPosition? positionOnly;
 
-  _ListItem._(this.header, this.signal);
+  _ListItem._(this.header, this.signal, this.positionOnly);
 
-  factory _ListItem.header(String text) => _ListItem._(text, null);
-  factory _ListItem.signal(TradingSignal signal) => _ListItem._(null, signal);
+  factory _ListItem.header(String text) => _ListItem._(text, null, null);
+  factory _ListItem.signal(TradingSignal signal) => _ListItem._(null, signal, null);
+  factory _ListItem.positionOnly(_HeldPosition held) => _ListItem._(null, null, held);
 
   bool get isHeader => header != null;
 }
@@ -461,6 +553,14 @@ class _SignalCard extends StatelessWidget {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        if (signal.name != null)
+                          Text(
+                            signal.name!,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12,
+                            ),
+                          ),
                         Text(
                           signal.strategyName,
                           style: TextStyle(
@@ -579,6 +679,75 @@ class _SignalCard extends StatelessWidget {
                   style: const TextStyle(color: Colors.orange, fontSize: 12),
                 ),
               ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A held position with no live signal to show alongside it - see
+/// signal_list_screen's _buildBody for why this exists (the backend's
+/// signal feed doesn't cover every ticker a position can exist for). Shows
+/// what a normal _SignalCard can't: side/qty/entry/current/P&L straight
+/// from the position itself, taps through to the full Positions screen
+/// rather than a signal detail page that has nothing to show.
+class _PositionOnlyCard extends StatelessWidget {
+  final _HeldPosition held;
+
+  const _PositionOnlyCard({required this.held});
+
+  @override
+  Widget build(BuildContext context) {
+    final position = held.position;
+    final pl = position.unrealizedPl;
+    final plColor = pl > 0 ? Colors.green : (pl < 0 ? Colors.red : Colors.grey);
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const PositionsScreen()),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      position.ticker,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '${position.side.toUpperCase()} ${position.qty} on ${held.accountNickname}',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                    ),
+                    Text(
+                      'No live signal for this ticker right now',
+                      style: TextStyle(color: Colors.grey[500], fontSize: 11, fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${pl >= 0 ? '+' : ''}\$${pl.toStringAsFixed(2)}',
+                    style: TextStyle(color: plColor, fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  if (position.currentPrice != null)
+                    Text(
+                      '\$${position.currentPrice!.toStringAsFixed(2)}',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
+                ],
+              ),
             ],
           ),
         ),

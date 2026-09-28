@@ -135,6 +135,14 @@ class SignalResult:
     # these keys. None means "unknown", not "closed" - see current_signals.py.
     market_open: bool | None = None
     trading_accounts: list[str] | None = None
+    # Full company/asset name (e.g. "Biogen Inc." for BIIB) - set centrally
+    # by signal_api.py's _refresh_loop via universe.name_for_ticker() AFTER
+    # construction, not here, so every construction path below (snapshot-
+    # sourced or direct-fetch) gets it the same way without duplicating the
+    # lookup. None when the ticker isn't in any known universe (e.g. a
+    # hand-typed extra_targets ticker) - the app falls back to the symbol
+    # alone.
+    name: str | None = None
 
 
 def _signal_from_snapshot(ticker: str, strategy_name: str) -> SignalResult | None:

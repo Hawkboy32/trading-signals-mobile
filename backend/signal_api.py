@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 import _auth
 import advisor_service
-from backtester import account_risk, execution_log, notifications, position_attribution, source_stamp, version
+from backtester import account_risk, challenge_state, execution_log, notifications, position_attribution, source_stamp, universe, version
 from backtester.accounts import build_broker_accounts, list_accounts
 from backtester.auto_trader_state import load_control, save_control, trigger_kill_switch
 from backtester.brokers.base import OrderSide, summarize_fees
@@ -126,6 +126,8 @@ def _refresh_loop() -> None:
         try:
             combos = _current_combos()
             results = [compute_current_signal(t, s, p, client) for t, s, p in combos]
+            for r in results:
+                r.name = universe.name_for_ticker(r.ticker)
             with _cache_lock:
                 _cache["signals"] = [asdict(r) for r in results]
                 _cache["last_refreshed"] = datetime.now(timezone.utc).isoformat()
@@ -1326,3 +1328,60 @@ def set_entry_status(req: EntryStatusRequest, username: str = Depends(_require_s
         f"manual {req.action} from the mobile app",
     )
     return {"ok": True, "ticker": req.ticker, "status": entry.status}
+
+
+@app.get("/challenge")
+def challenge_status(username: str = Depends(_require_session)) -> dict:
+    """Kraken Funded challenge state - deliberately separate from
+    /account-risk since a challenge tracks a FIXED +12%/-3% band from one
+    starting balance, not a rolling drawdown from a peak. Also separate from
+    the regular roster/signal feed since the account trades on its own
+    settings while an attempt is active (see challenge_trader.py)."""
+    history = challenge_state.load()
+    attempt = history.active
+    active_out = None
+    if attempt is not None:
+        try:
+            broker = build_broker_accounts([attempt.account_id])[0]
+            current_balance = broker.get_account_snapshot().equity
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"Could not read challenge account's equity: {e}")
+        active_out = {
+            **asdict(attempt),
+            "target": attempt.target,
+            "floor": attempt.floor,
+            "current_balance": current_balance,
+            "progress_fraction": attempt.progress_fraction(current_balance),
+        }
+    return {
+        "active": active_out,
+        "tiers": challenge_state.TIERS,
+        "attempts": [asdict(a) for a in history.attempts],
+    }
+
+
+class StartChallengeRequest(BaseModel):
+    tier: str  # "starter" | "mid" | "anchor"
+    account_id: str
+    strategy_name: str
+    sizing_pct: float  # percent, e.g. 20.0 for 20% of equity per entry
+    password: str
+
+
+@app.post("/challenge/start")
+def start_challenge(req: StartChallengeRequest, username: str = Depends(_require_session)) -> dict:
+    """Starts a new challenge attempt. Only sets the STATE - actually running
+    challenge_trader.py against the account is a separate, manual step (see
+    its module docstring for why it's never bolted onto auto_trader.py)."""
+    if not _auth.verify_password(username, req.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    if not 1 <= req.sizing_pct <= 100:
+        raise HTTPException(status_code=400, detail="Sizing must be between 1% and 100% of equity.")
+    try:
+        attempt = challenge_state.start_attempt(
+            tier=req.tier, account_id=req.account_id,
+            strategy_name=req.strategy_name, sizing_pct=req.sizing_pct / 100,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"ok": True, "attempt": asdict(attempt)}

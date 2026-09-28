@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/account_detail.dart';
 import '../models/account_sizing.dart';
 import '../models/advisor_report.dart';
+import '../models/challenge.dart';
 import '../models/deposit.dart';
 import '../models/position.dart';
 import '../models/risk_control.dart';
@@ -800,6 +801,31 @@ class AuthClient {
         'ticker': ticker,
         'strategy_name': strategyName,
         'action': action,
+        'password': password,
+      });
+
+  /// Kraken Funded challenge state - a fixed +12%/-3% band from one starting
+  /// balance, tracked separately from the rolling per-account drawdown
+  /// breaker (fetchAccountRisk) because it's a genuinely different kind of
+  /// threshold. `active` is null when no attempt is currently running.
+  static Future<ChallengeState> fetchChallenge() async =>
+      ChallengeState.fromJson(await _getAuthed('/challenge'));
+
+  /// Starts a new challenge attempt. This only records the STATE - actually
+  /// running challenge_trader.py against the account is a separate manual
+  /// step on the desktop side, not something this app triggers.
+  static Future<void> startChallenge({
+    required String tier,
+    required String accountId,
+    required String strategyName,
+    required double sizingPct, // percent, e.g. 20.0 for 20%
+    required String password,
+  }) =>
+      _postAuthed('/challenge/start', {
+        'tier': tier,
+        'account_id': accountId,
+        'strategy_name': strategyName,
+        'sizing_pct': sizingPct,
         'password': password,
       });
 

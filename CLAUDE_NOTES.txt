@@ -806,6 +806,54 @@ outright ("a program may still be using a file in the directory") — likely a c
 to builds not fully overwriting old output. Going forward: stop any download server BEFORE
 starting a new build, not just before/after serving.
 
+=== 2026-09-26: Real "blindbandit" leak found AFTER this repo was already made public ===
+The earlier history scrub (making this repo public) only used `git filter-repo --replace-text`/
+`--replace-message` - those rewrite blob CONTENT and commit MESSAGES only, never file PATHS. The
+Android app's package identity was literally `com.blindbandit.tradingsignals.trading_signals` -
+the real dashboard username, lowercase, baked into a directory name (and therefore every
+platform's org identifier: build.gradle.kts, all six Kotlin files' package/import lines, the
+iOS/macOS Xcode projects, Linux CMakeLists.txt, Windows Runner.rc, the widget's Android
+component-name string) - never caught because it's a path/identifier, not something the earlier
+content-only replacement list was scoped to. Confirmed genuinely live and publicly fetchable via
+raw.githubusercontent.com before touching anything.
+
+Renamed to com.hawkboy32.* (the already-public GitHub handle) across every platform file, moved
+the actual Kotlin directory tree, verified with a clean debug APK build under the new identity,
+THEN re-ran the same disciplined scrub process as the first pass on this repo (full verified
+backup - .git object counts + tracked-file-list diff confirmed identical before touching
+anything, not just "the .git folder exists") - `git filter-repo --replace-text` (content) +
+`--replace-message` (the one commit message that mentioned it) + `--path-rename` (the actual
+directory) in one combined pass, force-pushed, then verified live on GitHub (new path 200s, old
+path 404s). Also caught two leftover lowercase "blindbandit" instances in this file and
+backend/_auth.py that the FIRST scrub's case-sensitive replacement list missed (it only targeted
+the mixed-case "BlindBandit").
+
+One real gotcha hit along the way: a git stash holding in-progress work (the Challenges feature
+below) had to survive this - `git branch <name> stash@{0}` converts a stash into a normal branch
+BEFORE running filter-repo, since filter-repo's interaction with the special stash-ref internals
+isn't something to trust blindly. Recovering the stash's UNTRACKED (new) files afterward needed
+checking out from the stash's own 3rd parent commit specifically (`git cat-file -p` to find it) -
+`git checkout <stash-branch> -- <paths>` for genuinely-untracked-at-stash-time files fails with
+"did not match any file(s) known to git", and mixing valid + invalid pathspecs in ONE checkout
+command silently no-ops the WHOLE command, including the valid paths - always checkout untracked
+vs. tracked recoveries as separate commands.
+
+Consequence worth remembering if this comes up again: renaming the applicationId means Android
+treats it as a different app - the old install doesn't get replaced in place, needs a fresh
+install, and the home-screen widget needs re-adding.
+
+=== 2026-09-26: New "Challenges" section (mobile UI + backend), for the Kraken Funded work ===
+See ../backtester/CLAUDE_NOTES.txt's 2026-09-26/27 entry for the full Kraken Funded context.
+Added GET /challenge (active attempt + live current_balance/progress_fraction read via the same
+build_broker_accounts() the rest of the backend uses, plus attempt history) and POST
+/challenge/start (password-confirmed, like every other control write here) to signal_api.py.
+Mobile side: a new Challenges screen - asymmetric progress bar from floor (-3%) to target (+12%)
+with a tick at the actual starting balance (NOT centered - matches challenge_state.py's own
+progress_fraction() reasoning), a start-attempt sheet (tier/account/strategy/sizing picker). This
+work was stashed, survived the blindbandit rewrite above as a converted branch, and was recovered
+back into the working tree afterward (see that entry) - still uncommitted as of this note,
+pending review.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
 Claude's own auto-memory system (separate from this file) has the fuller session-by-session
 history of how this got built. This .txt is the lightweight, quick-orientation summary — see

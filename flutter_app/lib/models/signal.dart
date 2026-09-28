@@ -3,6 +3,7 @@
 /// combo the live bot is actually configured to trade.
 class TradingSignal {
   final String ticker;
+  final String? name; // full company/asset name, e.g. "Biogen" for BIIB - null if unknown
   final String strategyName;
   final String signal; // "buy" / "sell" / "hold"
   final double? conviction; // null when signal is "hold"
@@ -20,6 +21,7 @@ class TradingSignal {
 
   TradingSignal({
     required this.ticker,
+    required this.name,
     required this.strategyName,
     required this.signal,
     required this.conviction,
@@ -39,6 +41,7 @@ class TradingSignal {
   factory TradingSignal.fromJson(Map<String, dynamic> json) {
     return TradingSignal(
       ticker: json['ticker'] as String,
+      name: json['name'] as String?,
       strategyName: json['strategy_name'] as String,
       signal: json['signal'] as String,
       conviction: (json['conviction'] as num?)?.toDouble(),
