@@ -144,8 +144,7 @@ check and the phone's Tailscale connection both work), but a middleware (`restri
   process supervision/auto-restart, not API behavior.
 - `requirements.txt` — fastapi, uvicorn, anthropic, plus `-e ../../backtester` (the editable
   dependency that gives this backend access to the whole trading system's code).
-- `backend_restart*.log` — runtime logs, not source; currently has uncommitted content, leave
-  alone.
+- `backend_restart*.log` — runtime logs, not source; gitignored (`*.log`).
 
 ### `flutter_app/lib/` (Flutter client)
 - `main.dart` — app entry point: registers the WorkManager periodic widget-refresh task, sets up
@@ -210,10 +209,11 @@ check and the phone's Tailscale connection both work), but a middleware (`restri
   root-level layout that adds new direct children (not nested inside the rows' own wrapper
   `Column`) risks silently truncating/failing the render on-device; this doesn't show up in a
   normal build, only on a real device/logcat.
-- **`backend_restart*.log`, `CLAUDE_NOTES.txt`, and `backend/watchdog.py` currently have
-  uncommitted changes** (per `git status` at the time this file was written) — this CLAUDE.md is
-  independent of that in-progress work; don't assume those files are in the state described above
-  if they've since been edited further.
+- **`backend/watchdog.py` checks health before it launches anything** and adopts a backend that
+  is already up; it launches with `CREATE_NO_WINDOW` and deliberately without `DETACHED_PROCESS`.
+  Both came from bugs found live on 2026-09-28 (an endless relaunch loop against an occupied
+  port, and a console window appearing on every relaunch) — see `CLAUDE_NOTES.txt` before
+  changing either. A watchdog that is already running keeps its old code until it is restarted.
 - Mobile login's 2FA is mandatory (no "optional until enrolled" grace period the dashboard has) —
   a user who hasn't enrolled 2FA via the dashboard's Settings page yet will get a clear "set it up
   first" error from `/login`, not a silent password-only login.

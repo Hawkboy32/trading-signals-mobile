@@ -965,10 +965,10 @@ time. It is still on `claude-sonnet-5` with a forced tool choice; moving it to a
 needs a redesign of that call rather than a model-name swap, because the newer model rejects
 forced tool choice.
 
-State of the working tree on 2026-10-10, so nobody assumes it's clean: the 2026-09-28
-entries above (held-position signals aside, which is committed) describe changes to
-backend/watchdog.py, the widget's Kotlin/XML and this file that are still UNCOMMITTED, and
-local `main` has no upstream tracking branch set, although it matches origin/main.
+The 2026-09-28 watchdog fixes described above, and the widget's rename from "Datapad" to
+"Chopper", had been sitting uncommitted since they were made. Both were committed and pushed
+on 2026-10-10 (1d7a2b6, f937e77), and runtime *.log files are now gitignored. Local `main`
+still has no upstream tracking branch set, so push with `git push origin main`.
 
 === WHERE TO LOOK FOR MORE DETAIL ===
 CLAUDE.md (this folder) is the map of the code: start there to find which file does what.
