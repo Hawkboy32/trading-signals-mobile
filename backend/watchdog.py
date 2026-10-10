@@ -54,10 +54,21 @@ def _is_healthy() -> bool:
 
 def _launch() -> subprocess.Popen:
     print("[watchdog] launching signal_api...", flush=True)
+    # 2026-09-28: DETACHED_PROCESS + CREATE_NO_WINDOW together do NOT reliably
+    # suppress a window on Windows 11 - found live, a relaunch still opened a
+    # full WindowsTerminal.exe/OpenConsole.exe pair despite CREATE_NO_WINDOW
+    # being set. DETACHED_PROCESS means "no console, don't inherit one," and
+    # since Windows 11's default console host is Windows Terminal, the child
+    # (a console-subsystem python.exe) gets a brand new Terminal window
+    # allocated for it anyway. CREATE_NO_WINDOW alone is the documented way to
+    # run a console app with no window at all - drop DETACHED_PROCESS.
     return subprocess.Popen(
         [str(PYTHON), "-m", "uvicorn", "signal_api:app", "--host", "0.0.0.0", "--port", "8600"],
         cwd=str(BACKEND_DIR),
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+        creationflags=(
+            subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW
+        ),
     )
 
 
@@ -66,14 +77,28 @@ def main() -> None:
     # launched via pythonw.exe (no console), same blind spot that let
     # auto_trader.py die with zero trace the same day. See logging_setup.py.
     logging_setup.configure("mobile_backend_watchdog")
-    proc = _launch()
-    time.sleep(STARTUP_GRACE_SECONDS)
+
+    # 2026-09-28: found live - if a backend is already up and healthy when this
+    # watchdog starts (e.g. someone started it by hand, or this watchdog is
+    # restarting after having lost track of the child it originally launched),
+    # unconditionally launching here spawns a second uvicorn that can never
+    # bind :8600. That losing process exits immediately, which the loop below
+    # reads as "process exited" and relaunches - forever, since the port is
+    # never actually free. Checking health first avoids ever creating that
+    # doomed duplicate.
+    if _is_healthy():
+        print("[watchdog] backend already healthy on startup - adopting, not relaunching", flush=True)
+        proc = None
+    else:
+        proc = _launch()
+        time.sleep(STARTUP_GRACE_SECONDS)
+
     while True:
-        proc_dead = proc.poll() is not None
+        proc_dead = proc is not None and proc.poll() is not None
         if proc_dead or not _is_healthy():
             reason = "process exited" if proc_dead else "health check failed"
             print(f"[watchdog] backend down ({reason}) - relaunching", flush=True)
-            if not proc_dead:
+            if proc is not None and not proc_dead:
                 try:
                     proc.kill()
                 except Exception:  # noqa: BLE001

@@ -1,5 +1,7 @@
 CLAUDE_NOTES.txt — Trading Signals Mobile App: reference for picking up a new session
-(Last updated: 2026-08-05. Update this file as the project evolves — don't let it go stale.)
+(Last updated: 2026-10-10 — the dated entries further down are the real record; this
+header only says when the file was last touched. Update this file as the project evolves —
+don't let it go stale. For WHERE things live in the code, read CLAUDE.md, not this file.)
 
 === WHAT THIS IS ===
 An Android app (Flutter) that shows a live buy/sell/hold signal + confidence score per
@@ -880,7 +882,98 @@ above) correctly degrades to "not enough bar history" rather than erroring - Pol
 an obscure token this thin is genuinely sparse, expected, not a bug. No Flutter changes needed
 for this one - purely backend, the already-installed app picks it up on its next refresh.
 
+=== BUG FOUND + FIXED 2026-09-28: watchdog.py retry-loop flashed a console window every ~15s ===
+User reported a terminal window repeatedly popping up and disappearing on the desktop, screen-
+recorded it. Extracted frames from the recording (ffmpeg, no video tool built into this
+environment - pulled a throwaway `imageio-ffmpeg` into the scratchpad venv rather than touching
+either project venv) and found the actual terminal content mid-flash: a uvicorn startup sequence
+ending in `[Errno 10048] ... only one usage of each socket address ... 8600`, then immediate
+shutdown. That's this backend's own port.
+
+Root cause, confirmed against the live process list, not guessed: earlier the same day (13:15) a
+Claude session had restarted signal_api by hand via a raw shell command (`uvicorn ... --port
+8600`), bypassing `watchdog.py` entirely. The REAL `watchdog.py` process (PID 7696, running
+continuously since 2026-09-11) still held a handle to whatever it had originally launched that
+morning - once that original child was gone, `proc.poll()` correctly read "dead" and the watchdog
+tried to relaunch. But `main()` always calls `_launch()` unconditionally, with no "is something
+already healthy on this port" check first - so it kept spawning a brand-new uvicorn that could
+never bind :8600 (the hand-restarted one already owned it), which exited immediately, which the
+loop read as "process exited" again, forever - retrying roughly every `STARTUP_GRACE_SECONDS`
+(10s). Compounding bug: `_launch()`'s `creationflags` was `CREATE_NEW_PROCESS_GROUP |
+DETACHED_PROCESS` with no `CREATE_NO_WINDOW` - fine for `pythonw.exe` children elsewhere in this
+project, but this launches `python.exe` (console subsystem) directly, so every doomed relaunch
+attempt flashed a brand-new visible console before dying. This had likely been running since
+13:15 that afternoon, i.e. hours of silent flashing before it was actually reported.
+
+**Fix** (`backend/watchdog.py`): (1) added `CREATE_NO_WINDOW` to `_launch()`'s creationflags, so
+even a failed relaunch attempt is invisible; (2) `main()` now checks `_is_healthy()` BEFORE its
+first launch - if something's already serving correctly (e.g. a manual restart happened while
+this watchdog was still up), it adopts that (`proc = None`) instead of spawning a guaranteed-to-
+fail duplicate, and only launches for real once nothing is actually healthy. The monitoring loop
+was adjusted to treat `proc is None` as "not our process to poll, judge by `_is_healthy()` alone."
+Verified with a dry run (mocked `_launch`/`_is_healthy`/`time.sleep`, no `pytest` in this backend's
+venv so no formal test file added - matches the existing lack of test infra here rather than
+inventing a one-off harness): zero duplicate launches when already healthy at startup, and the
+normal cold-start-then-crash-then-relaunch path still fires exactly the expected two launches.
+
+**Not yet done**: the stray PID 7696/20500 pair was still running the OLD code and mid-loop when
+this was found - killing it got blocked by the Claude Code auto-mode safety classifier (process
+termination flagged as a risky action needing explicit confirmation). Needs the user to either
+stop it manually (Task Manager, or just reboot) or explicitly approve the kill, then relaunch
+`watchdog.py` fresh so it picks up the fix and adopts the already-healthy PID 8800 backend instead
+of fighting it.
+
+**FOLLOW-UP, same day, after the user rebooted**: no stray/duplicate process this time (clean
+single watchdog instance), but a window still flashed once - screen-capped by the user. Real
+cause: `DETACHED_PROCESS | CREATE_NO_WINDOW` together do NOT reliably suppress a window on
+Windows 11. `DETACHED_PROCESS` means "no console, don't inherit the parent's" - since this
+machine's default console host is Windows Terminal, Windows allocated a brand-new
+`WindowsTerminal.exe`/`OpenConsole.exe` pair for the detached console-subsystem child (`python.exe`)
+regardless of `CREATE_NO_WINDOW` (confirmed via the live process list - both appeared at the exact
+same timestamp as the relaunch). Separately confirmed this WAS a genuine, one-off relaunch, not a
+duplicate-launch loop repeating the earlier bug: `watchdog.py`'s periodic `_is_healthy()` check
+false-positived once, almost certainly because the freshly-cold-started `signal_api` was still
+blocked on IBKR Gateway connection attempts (Gateway/`ibgateway1.exe` only finished starting a
+few seconds later per the process list) slow enough to blow the watchdog's 5s `/health` timeout -
+worth revisiting if it keeps happening, but only observed once so left as-is for now.
+**Fix**: dropped `DETACHED_PROCESS` from `_launch()`'s creationflags, keeping just
+`CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` - the documented-correct combo for "background
+console app, genuinely no window." Verified for real (not just read the docs): launched a
+throwaway `python.exe` child with the exact same flags via the real `subprocess.Popen` call this
+code makes - a `conhost.exe` briefly backs it (normal, invisible, expected for `CREATE_NO_WINDOW`)
+but critically no `WindowsTerminal.exe`/`OpenConsole.exe` pair ever appeared, unlike the
+`DETACHED_PROCESS` version. Note: the watchdog process that was already running when this second
+fix landed won't pick it up until its own next restart (it's an already-loaded Python module) -
+not urgent since the backend's been stable since the one false-positive relaunch, but worth
+knowing if a window is ever seen again before this watchdog itself gets restarted.
+
+=== 2026-10-10: CLAUDE.md map added; pre-existing Claude advisor verified live ===
+Added CLAUDE.md at the repo root: a MAP of the codebase (the backend's full route list and
+auth tiers, every Flutter screen/service/model, the Glance widget files, gotchas). It and this
+file have different jobs - CLAUDE.md says where things are now, this file says how they got
+that way. Don't copy one into the other.
+
+Writing it turned up one stale thing: flutter_app/test/widget_test.dart still pumps
+`TradingSignalsApp` and looks for the text 'Trading Signals', but the app title is now
+'Chopper' and the home screen is SignalListScreen, so `flutter test` fails as written. Not
+fixed yet - don't treat `flutter test` as a gate until it is.
+
+backend/advisor_service.py (the Claude second-opinion feature from 2026-09-18) was run for
+real on 2026-10-09 with a real API key, saved through backtester's keystore (the .env-backed
+store this backend already reads from, not a plain environment variable). It worked first
+time. It is still on `claude-sonnet-5` with a forced tool choice; moving it to a newer model
+needs a redesign of that call rather than a model-name swap, because the newer model rejects
+forced tool choice.
+
+State of the working tree on 2026-10-10, so nobody assumes it's clean: the 2026-09-28
+entries above (held-position signals aside, which is committed) describe changes to
+backend/watchdog.py, the widget's Kotlin/XML and this file that are still UNCOMMITTED, and
+local `main` has no upstream tracking branch set, although it matches origin/main.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
+CLAUDE.md (this folder) is the map of the code: start there to find which file does what.
+../CLAUDE_NOTES.txt is the workspace master index: sibling projects, cross-repo dependencies,
+and what runs at login.
 Claude's own auto-memory system (separate from this file) has the fuller session-by-session
 history of how this got built. This .txt is the lightweight, quick-orientation summary — see
 ../backtester/CLAUDE_NOTES.txt for the trading bot itself, which this app depends on.
