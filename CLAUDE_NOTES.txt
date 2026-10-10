@@ -955,8 +955,10 @@ that way. Don't copy one into the other.
 
 Writing it turned up one stale thing: flutter_app/test/widget_test.dart still pumps
 `TradingSignalsApp` and looks for the text 'Trading Signals', but the app title is now
-'Chopper' and the home screen is SignalListScreen, so `flutter test` fails as written. Not
-fixed yet - don't treat `flutter test` as a gate until it is.
+'Chopper' and the home screen is SignalListScreen, so `flutter test` failed as written. Fixed
+the same day: the test now looks for the 'Chopper' app-bar title. `flutter test` passes and
+`flutter analyze` reports no issues. It is still only a smoke test (the app builds and reaches
+its home screen) - nothing about signals, login or the widget is covered.
 
 backend/advisor_service.py (the Claude second-opinion feature from 2026-09-18) was run for
 real on 2026-10-09 with a real API key, saved through backtester's keystore (the .env-backed

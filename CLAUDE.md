@@ -46,8 +46,8 @@ flutter build apk --release      # the APK actually installed on the real phone 
 flutter test                     # runs flutter_app/test/widget_test.dart
 flutter analyze                  # static analysis gate used alongside build checks
 ```
-There is exactly one Dart test file, `flutter_app/test/widget_test.dart` — see Gotchas below,
-it is currently stale and will fail as written.
+There is exactly one Dart test file, `flutter_app/test/widget_test.dart` — a single smoke test,
+see Gotchas below.
 
 **Android widget build**: there's no separate build step — the Glance widget
 (`SignalsWidget.kt`/`SignalsWidgetReceiver.kt`) is plain Kotlin source compiled as part of the
@@ -201,10 +201,11 @@ check and the phone's Tailscale connection both work), but a middleware (`restri
 
 ## Gotchas
 
-- **`flutter_app/test/widget_test.dart` is stale.** It pumps `TradingSignalsApp` and asserts
-  `find.text('Trading Signals')`, but `main.dart`'s `MaterialApp.title` is now `'Chopper'` and the
-  home screen is `SignalListScreen` — as written, `flutter test` will fail. Fix or rewrite this
-  test before relying on `flutter test` as a gate.
+- **`flutter_app/test/widget_test.dart` is a smoke test only.** It pumps `TradingSignalsApp` and
+  asserts the `SignalListScreen` app bar reads `'Chopper'` — it proves the app builds and reaches
+  its home screen, nothing more (no backend is reachable under `flutter test`, so the screen is in
+  its loading/error state). If the app-bar title is ever renamed, this test has to change with it;
+  it sat failing on the old `'Trading Signals'` text until 2026-10-10.
 - **Glance `Column` 10-child cap** — see Architecture above. Any change to `SignalsWidget.kt`'s
   root-level layout that adds new direct children (not nested inside the rows' own wrapper
   `Column`) risks silently truncating/failing the render on-device; this doesn't show up in a
