@@ -246,7 +246,7 @@ class SignalsWidget : GlanceAppWidget() {
                 Row(modifier = GlanceModifier.fillMaxWidth()) {
                     StatusDot(if (botKilled) COL_DANGER else COL_SUCCESS)
                     Text(
-                        text = "  Datapad",
+                        text = "  Chopper",
                         style = TextStyle(color = solidColor(COL_ACCENT), fontWeight = FontWeight.Bold, fontSize = 14.sp),
                     )
                     if (isLarge) {
