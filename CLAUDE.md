@@ -13,8 +13,9 @@ repo `../backtester`. It has two halves:
   password-confirmed controls like kill-switch/rearm/sizing) over HTTP, reachable from the phone
   via Tailscale. It never re-implements any trading logic — it calls straight into
   `backtester`'s own modules, so what the app shows can't drift from what was actually validated.
-  `backend/watchdog.py` is a separate always-on process that launches `signal_api.py`'s uvicorn
-  server and relaunches it if it ever dies or stops responding to `/health`.
+  Since 2026-10-11 the uvicorn server is started at login and kept alive by Sentrywatch
+  (`../sentrywatch`), which relaunches it if it dies or stops answering `/health`;
+  `backend/watchdog.py`, the script that used to do that, is retired but still in the repo.
 - **`flutter_app/`** — a Flutter/Android client. It is a thin client: it has no trading logic of
   its own, just HTTP calls to the backend (`lib/services/api_client.dart` for unauthenticated
   reads, `lib/services/auth_client.dart` for everything behind login), screens to display the
@@ -32,8 +33,10 @@ done inside it):
 .venv/Scripts/uvicorn signal_api:app --host 0.0.0.0 --port 8600
 ```
 Needs `backtester/.env` (same Polygon API key the dashboard/bot use) — loaded automatically by
-absolute path, so cwd doesn't matter. For the always-on supervised version, run
-`backend/watchdog.py` instead (it launches/relaunches `signal_api`'s uvicorn itself).
+absolute path, so cwd doesn't matter. That command is exactly what Sentrywatch runs as its
+`mobile-backend` watch, so on this machine the backend is normally already up on port 8600 -
+starting a second copy by hand just fails to bind. To restart it, stop the process and
+Sentrywatch brings it back within ~30s (or use `../backtester/restart_all.py --only mobile_backend`).
 There is no backend test suite (no pytest files under `backend/` outside its own venv's installed
 packages) — the one place a dry-run test was done (watchdog's relaunch logic) was a manual
 mocked run, not a committed test file.
@@ -83,7 +86,7 @@ this specific tap right now", not just "a session is open on an unlocked phone".
 long-lived pairing/device-registration concept here (unlike a QR-pairing pattern some other
 projects use) — it's username/password/TOTP login over Tailscale, nothing more.
 
-Network trust: the server binds `0.0.0.0:8600` (required so the watchdog's `127.0.0.1` health
+Network trust: the server binds `0.0.0.0:8600` (required so the supervisor's `127.0.0.1` health
 check and the phone's Tailscale connection both work), but a middleware (`restrict_to_tailnet` in
 `signal_api.py`) rejects any client whose IP isn't loopback or in the Tailscale CGNAT range
 `100.64.0.0/10` — this is what actually keeps it off whatever LAN the machine happens to join.
@@ -139,9 +142,13 @@ check and the phone's Tailscale connection both work), but a middleware (`restri
   not wired into any execution path by design. Touch this for the `/advisor` feature only.
 - `_auth.py` — login/session handling (bcrypt + TOTP, in-memory bearer tokens). Touch this for
   anything about how mobile login or session expiry works.
-- `watchdog.py` — supervises `signal_api.py`'s uvicorn process (health-checks `/health` on
-  `127.0.0.1`, relaunches on process death or failed health check). Touch this for anything about
-  process supervision/auto-restart, not API behavior.
+- `watchdog.py` — the script that used to supervise `signal_api.py`'s uvicorn process.
+  **Retired on this machine 2026-10-11**: Sentrywatch (`../sentrywatch`) now starts the backend
+  at login and relaunches it on a failed `/health` check or process death, running exactly the
+  uvicorn command this script ran. Nothing launches `watchdog.py` any more (its Startup shortcut
+  was moved to `%APPDATA%\Sentrywatch\retired-startup-shortcuts\`). The backend's output is now
+  captured to `%APPDATA%\Sentrywatch\output\mobile-backend.log`. If the uvicorn command line
+  ever changes (port, host, module), change the `mobile-backend` watch in Sentrywatch too.
 - `requirements.txt` — fastapi, uvicorn, anthropic, plus `-e ../../backtester` (the editable
   dependency that gives this backend access to the whole trading system's code).
 - `backend_restart*.log` — runtime logs, not source; gitignored (`*.log`).
@@ -210,11 +217,11 @@ check and the phone's Tailscale connection both work), but a middleware (`restri
   root-level layout that adds new direct children (not nested inside the rows' own wrapper
   `Column`) risks silently truncating/failing the render on-device; this doesn't show up in a
   normal build, only on a real device/logcat.
-- **`backend/watchdog.py` checks health before it launches anything** and adopts a backend that
-  is already up; it launches with `CREATE_NO_WINDOW` and deliberately without `DETACHED_PROCESS`.
-  Both came from bugs found live on 2026-09-28 (an endless relaunch loop against an occupied
-  port, and a console window appearing on every relaunch) — see `CLAUDE_NOTES.txt` before
-  changing either. A watchdog that is already running keeps its old code until it is restarted.
+- **`backend/watchdog.py` is retired, not deleted.** If it is ever put back into service, keep
+  the two things it learned on 2026-09-28: it checks health before launching anything and adopts
+  a backend that is already up, and it launches with `CREATE_NO_WINDOW`, deliberately without
+  `DETACHED_PROCESS` (see `CLAUDE_NOTES.txt`). Don't run it alongside Sentrywatch's
+  `mobile-backend` watch - two supervisors on one port is the relaunch loop it was fixed for.
 - Mobile login's 2FA is mandatory (no "optional until enrolled" grace period the dashboard has) —
   a user who hasn't enrolled 2FA via the dashboard's Settings page yet will get a clear "set it up
   first" error from `/login`, not a silent password-only login.
@@ -227,7 +234,7 @@ check and the phone's Tailscale connection both work), but a middleware (`restri
 ## Pointers
 
 - `../CLAUDE_NOTES.txt` — the workspace master index: every sibling project, cross-repo
-  dependencies, and what runs at login (including this backend's `watchdog.py`).
+  dependencies, and what runs at login (including who supervises this backend).
 - `README.md` (repo root) — short public-facing project description and links to the real
   write-up (screenshots, bugs found/fixed) hosted outside this repo.
 - `CLAUDE_NOTES.txt` (repo root, ~950 lines) — the long-form running session log for this project

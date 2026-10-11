@@ -972,6 +972,25 @@ The 2026-09-28 watchdog fixes described above, and the widget's rename from "Dat
 on 2026-10-10 (1d7a2b6, f937e77), and runtime *.log files are now gitignored. Local `main`
 still has no upstream tracking branch set, so push with `git push origin main`.
 
+=== 2026-10-11: the backend is now supervised by Sentrywatch, not backend/watchdog.py ===
+Sentrywatch (../sentrywatch, v0.9.2) starts at login and owns this backend: it runs the same
+command watchdog.py ran (`.venv\Scripts\python.exe -m uvicorn signal_api:app --host 0.0.0.0
+--port 8600`, cwd backend/), checks http://127.0.0.1:8600/health every 30s, and relaunches on a
+failed check or a dead process. watchdog.py is no longer started by anything; its Startup
+shortcut was moved (not deleted) to %APPDATA%\Sentrywatch\retired-startup-shortcuts\.
+
+Verified live the same day: Sentrywatch adopted the already-running backend without touching
+it, the old watchdog was stopped with the backend left running, and then the backend was
+killed on purpose - it was answering /health again 25 seconds later, launched by Sentrywatch.
+That one deliberate restart logged every phone session out (sessions are in memory only).
+
+Gained: the backend's own stdout/stderr is now captured
+(%APPDATA%\Sentrywatch\output\mobile-backend.log) - under watchdog.py it went nowhere, which
+is why the backend_restart*.log files in this folder had to be captured by hand.
+
+restart_all.py (in ../backtester) is unchanged in behaviour: it stops this backend and leaves
+the relaunch to "its watchdog", which is now Sentrywatch.
+
 === WHERE TO LOOK FOR MORE DETAIL ===
 CLAUDE.md (this folder) is the map of the code: start there to find which file does what.
 ../CLAUDE_NOTES.txt is the workspace master index: sibling projects, cross-repo dependencies,
